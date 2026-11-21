@@ -249,6 +249,15 @@ describe.runIf(Boolean(__EDGE_MODELS__))("T1 slots with real models (EDGE_MODELS
         console.warn("table from PDF:", t.out.html);
         expect(t.out.html).toContain("<td>华东</td><td>1200</td><td>+12%</td><td>38%</td>");
         expect(t.out.html).toContain("<td>西部</td><td>510</td>");
+        // Every other region passes through table-recognize as empty html, without inference.
+        const others = layout.map((l, i) => ({ l, i })).filter(({ l }) => l.label !== "table");
+        expect(others.length).toBeGreaterThan(0);
+        for (const { l, i } of others) {
+            expect(r.out.regions[i].filename).toMatch(new RegExp(`-r\\d+-${l.label}\\.png$`));
+            const skip = await call("tableRecognize", { image: r.out.regions[i] });
+            expect(skip.out).toEqual({ success: true, html: "" });
+            expect(skip.progress.at(-1)?.message).toBe(`skipped: layout region "${l.label}" is not a table`);
+        }
     });
 
     it("layout-detect (PP-DocLayout-M, the swap option)", async () => {
@@ -310,6 +319,33 @@ describe.runIf(Boolean(__EDGE_MODELS__))("T1 slots with real models (EDGE_MODELS
         console.warn("webm part durations:", durs.map((d) => d.toFixed(2)).join(", "));
         for (const d of durs) expect(d).toBeGreaterThan(1.5);
     });
+
+    it("split-video: the scanall demo clip's 4 slides, also at the canvas node's PySceneDetect-scale threshold 20", async () => {
+        // product-intro.mp4: scanall demo/samples/产品介绍短片.mp4 (made by scanall's demo tooling,
+        // self-authored content), its video stream copied without the audio track. 50 s,
+        // 1280×720, 25 fps; hard cuts where ffmpeg's scene filter finds them: 10.91, 28.27, 42.95 s.
+        const video = await fixture("product-intro.mp4", "video/mp4");
+        const CUTS = [10.91, 28.27, 42.95];
+        for (const threshold of [undefined, 20]) {
+            const r = await timed(`split-video, 50 s 1280×720 MP4, threshold ${threshold ?? "default"}`, () =>
+                call("splitVideo", threshold === undefined ? { video } : { video, threshold }),
+            );
+            expect(r.out.error).toBeUndefined();
+            expect(r.progress.some((p) => p.message === "4 shots (transnetv2)")).toBe(true);
+            const parts = r.out.video_parts;
+            expect(parts).toHaveLength(4);
+            let at = 0;
+            const ends: number[] = [];
+            for (const p of parts) {
+                expect(p.mime).toBe("video/mp4");
+                at += (await videoDuration(p)).duration;
+                ends.push(at);
+            }
+            console.warn(`demo clip cuts (threshold ${threshold ?? "default"}):`, ends.slice(0, 3).map((s) => s.toFixed(2)).join(", "));
+            CUTS.forEach((c, i) => expect(Math.abs(ends[i]! - c)).toBeLessThan(0.5));
+            expect(Math.abs(at - 49.89)).toBeLessThan(0.5);
+        }
+    }, 300_000);
 
     it("detect-objects (D-FINE nano fp16 by default, int8 as the alternative; transformers.js)", async () => {
         // Default (no model picked): fp16.

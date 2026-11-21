@@ -37,6 +37,29 @@ export function stitch(windows: Float32Array[], n: number): Float32Array {
     return out;
 }
 
+/** TransNetV2's own cut threshold on the single-frame head (`predictions_to_scenes`). */
+export const TNV2_THRESHOLD = 0.5;
+/** A threshold above 1 is on PySceneDetect's ContentDetector scale; this value maps to {@link TNV2_THRESHOLD}. */
+export const CONTENT_SCALE_AT_DEFAULT = 20;
+
+/**
+ * The cut probability threshold for the `split-video` input `threshold`.
+ *
+ * The ABI's `threshold` is shared with the PySceneDetect node, whose ContentDetector
+ * score runs 0..~100 (its default 27-30; the TongFlow canvas node fills in 20). Read as a
+ * probability, 20 is never reached and every video came out as one shot. So:
+ * - absent / not a positive number: 0.5 (TransNetV2's default);
+ * - in (0, 1]: a TransNetV2 probability, used as is (capped at 0.99);
+ * - above 1: the ContentDetector scale, mapped linearly so 20 ↦ 0.5 (`t / 40`), clamped to [0.1, 0.9].
+ *
+ * Higher always means fewer cuts.
+ */
+export function transnetThreshold(t: unknown): number {
+    if (typeof t !== "number" || !Number.isFinite(t) || t <= 0) return TNV2_THRESHOLD;
+    if (t <= 1) return Math.min(t, 0.99);
+    return Math.min(0.9, Math.max(0.1, (t / CONTENT_SCALE_AT_DEFAULT) * TNV2_THRESHOLD));
+}
+
 export function sigmoid(x: number): number {
     return 1 / (1 + Math.exp(-x));
 }
