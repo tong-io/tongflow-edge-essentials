@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { EdgeContext } from "../../src/context.js";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -10,6 +10,9 @@ const SOURCES: [string, string][] = [
     ["assets/xberg/", "node_modules/@xberg-io/xberg-wasm/pkg/web/"],
     ["assets/ort/", "node_modules/onnxruntime-web/dist/"],
 ];
+
+/** Real-model tests read weights from here (`<org>/<repo>/<path>`); unset = skipped. */
+export const EDGE_MODELS_DIR = process.env.EDGE_MODELS_DIR;
 
 export function nodeResolveAsset(rel: string): string {
     for (const [prefix, src] of SOURCES) if (rel.startsWith(prefix)) return root + src + rel.slice(prefix.length);
@@ -37,7 +40,10 @@ export interface Recorded {
     downloads: { loaded: number; total?: number; label: string }[];
 }
 
-export function nodeCtx(signal: AbortSignal = new AbortController().signal): EdgeContext & { rec: Recorded } {
+export function nodeCtx(
+    signal: AbortSignal = new AbortController().signal,
+    extra: { model?: string; params?: Record<string, unknown> } = {},
+): EdgeContext & { rec: Recorded } {
     patchFetch();
     const rec: Recorded = { progress: [], downloads: [] };
     return {
@@ -45,7 +51,9 @@ export function nodeCtx(signal: AbortSignal = new AbortController().signal): Edg
         onProgress: (p) => rec.progress.push(p),
         onDownload: (p) => rec.downloads.push(p),
         resolveAsset: nodeResolveAsset,
-        modelBase: "file:///models/",
+        modelBase: EDGE_MODELS_DIR ? `${pathToFileURL(EDGE_MODELS_DIR).href.replace(/\/$/, "")}/` : "file:///nonexistent-models/",
+        params: extra.params ?? {},
+        ...(extra.model ? { model: extra.model } : {}),
         rec,
     };
 }
