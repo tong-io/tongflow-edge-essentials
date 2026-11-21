@@ -25,6 +25,10 @@ export interface EdgeContext {
      * to a same-origin URL the worker can fetch. Directory paths end with `/`.
      */
     resolveAsset(relPath: string): string;
+    /** The slot this call runs for (one method may serve several slots). */
+    nodeSlot?: string;
+    /** Advanced params from the node (`_params`); `{}` when none. */
+    params?: Record<string, unknown>;
 }
 
 /**
@@ -47,5 +51,7 @@ export function toEdgeContext(ctx: EdgeMethodContext, assetBase: string | URL): 
         ...(ctx.model ? { model: ctx.model } : {}),
         modelBase: resolveModelBase((ctx as { modelBase?: string }).modelBase, assetBase),
         resolveAsset: (relPath) => new URL(relPath, assetBase).href,
+        nodeSlot: ctx.nodeSlot,
+        params: ctx.params ?? {},
     };
 }

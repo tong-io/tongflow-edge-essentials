@@ -2,7 +2,12 @@
     {
         "id": "bge-small-zh-v1.5",
         "source": "modelscope:Xenova/bge-small-zh-v1.5",
-        "files": ["config.json", "tokenizer.json", "tokenizer_config.json", "onnx/model_quantized.onnx"],
+        "files": [
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "onnx/model_quantized.onnx"
+        ],
         "approxMB": 24,
         "license": "MIT",
         "attribution": "bge-small-zh-v1.5 by BAAI (FlagEmbedding, https://github.com/FlagOpen/FlagEmbedding), MIT License; ONNX conversion by Xenova"
@@ -10,9 +15,113 @@
     {
         "id": "bge-base-zh-v1.5",
         "source": "modelscope:Xenova/bge-base-zh-v1.5",
-        "files": ["config.json", "tokenizer.json", "tokenizer_config.json", "onnx/model_quantized.onnx"],
+        "files": [
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "onnx/model_quantized.onnx"
+        ],
         "approxMB": 103,
         "license": "MIT",
         "attribution": "bge-base-zh-v1.5 by BAAI (FlagEmbedding, https://github.com/FlagOpen/FlagEmbedding), MIT License; ONNX conversion by Xenova"
+    },
+    {
+        "id": "qwen3.5-0.8b",
+        "source": "modelscope:onnx-community/Qwen3.5-0.8B-ONNX",
+        "files": [
+            "config.json",
+            "generation_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "chat_template.jinja",
+            "preprocessor_config.json",
+            "processor_config.json",
+            "onnx/embed_tokens_q4f16.onnx",
+            "onnx/embed_tokens_q4f16.onnx_data",
+            "onnx/vision_encoder_fp16.onnx",
+            "onnx/vision_encoder_fp16.onnx_data",
+            "onnx/decoder_model_merged_q4f16.onnx",
+            "onnx/decoder_model_merged_q4f16.onnx_data",
+            "onnx/embed_tokens_q4.onnx",
+            "onnx/embed_tokens_q4.onnx_data",
+            "onnx/vision_encoder_q4.onnx",
+            "onnx/vision_encoder_q4.onnx_data",
+            "onnx/decoder_model_merged_q4.onnx",
+            "onnx/decoder_model_merged_q4.onnx_data"
+        ],
+        "approxMB": 810,
+        "license": "Apache-2.0",
+        "attribution": "Qwen3.5-0.8B by the Qwen team, Alibaba Cloud"
+    },
+    {
+        "id": "glm-ocr",
+        "source": "modelscope:onnx-community/GLM-OCR-ONNX",
+        "files": [
+            "config.json",
+            "generation_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "chat_template.jinja",
+            "preprocessor_config.json",
+            "processor_config.json",
+            "onnx/embed_tokens_q4f16.onnx",
+            "onnx/embed_tokens_q4f16.onnx_data",
+            "onnx/vision_encoder_q4f16.onnx",
+            "onnx/vision_encoder_q4f16.onnx_data",
+            "onnx/decoder_model_merged_q4f16.onnx",
+            "onnx/decoder_model_merged_q4f16.onnx_data",
+            "onnx/embed_tokens_q4.onnx",
+            "onnx/embed_tokens_q4.onnx_data",
+            "onnx/vision_encoder_q4.onnx",
+            "onnx/vision_encoder_q4.onnx_data",
+            "onnx/decoder_model_merged_q4.onnx",
+            "onnx/decoder_model_merged_q4.onnx_data"
+        ],
+        "approxMB": 660,
+        "license": "MIT",
+        "attribution": "GLM-OCR by Zhipu AI (Z.ai)"
+    },
+    {
+        "id": "embeddinggemma-2",
+        "source": "modelscope:onnx-community/embeddinggemma-2-ONNX",
+        "files": [
+            "config.json",
+            "config_sentence_transformers.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "chat_template.jinja",
+            "preprocessor_config.json",
+            "processor_config.json",
+            "onnx/model_q4f16.onnx",
+            "onnx/model_q4f16.onnx_data",
+            "onnx/vision_encoder_q4f16.onnx",
+            "onnx/vision_encoder_q4f16.onnx_data",
+            "onnx/model_q4.onnx",
+            "onnx/model_q4.onnx_data",
+            "onnx/vision_encoder_q4.onnx",
+            "onnx/vision_encoder_q4.onnx_data"
+        ],
+        "approxMB": 290,
+        "license": "Apache-2.0 (Gemma 4 license); deployments must follow the Gemma Prohibited Use Policy",
+        "attribution": "EmbeddingGemma 2 by Google DeepMind"
+    },
+    {
+        "id": "lfm2.5-350m",
+        "source": "modelscope:LiquidAI/LFM2.5-350M-ONNX",
+        "files": [
+            "config.json",
+            "generation_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "chat_template.jinja",
+            "LICENSE",
+            "onnx/model_q4f16.onnx",
+            "onnx/model_q4f16.onnx_data",
+            "onnx/model_q4.onnx",
+            "onnx/model_q4.onnx_data"
+        ],
+        "approxMB": 259,
+        "license": "LFM Open License v1.0",
+        "attribution": "LFM2.5-350M by Liquid AI, Inc., licensed under the LFM Open License v1.0"
     }
 ]
