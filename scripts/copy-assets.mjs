@@ -28,6 +28,9 @@ const COPIES = [
     ["onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm", "ort/ort-wasm-simd-threaded.asyncify.wasm"], // ~29 MB
     ["onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.mjs", "ort/ort-wasm-simd-threaded.asyncify.mjs"],
     ["/licenses/onnxruntime-web-MIT.txt", "ort/LICENSE"], // the npm package ships no LICENSE file
+    // MuPDF.js (AGPL-3.0-or-later), the `mupdf` implementation of parse-document / render-pages.
+    ["mupdf/dist/mupdf-wasm.wasm", "mupdf/mupdf-wasm.wasm"], // ~10 MB
+    ["mupdf/LICENSE", "mupdf/LICENSE"],
 ];
 
 const LIMIT = 100 * 1024 * 1024;

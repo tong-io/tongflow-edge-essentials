@@ -63,6 +63,7 @@
         "mammoth": "1.13.0",
         "marked": "18.2.1",
         "mediabunny": "1.66.2",
+        "mupdf": "1.28.6",
         "officeparser": "8.9.0",
         "onnxruntime-web": "1.31.1",
         "papaparse": "5.7.1",
