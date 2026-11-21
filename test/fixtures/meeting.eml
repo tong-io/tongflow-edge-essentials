@@ -1,0 +1,29 @@
+From: =?UTF-8?B?5byg5LiJ?= <zhangsan@example.com>
+To: Li Si <lisi@example.com>
+Cc: wangwu@example.com
+Subject: =?UTF-8?B?5Lya6K6u57qq6KaB77ya6aG555uu5ZCv5Yqo?=
+Date: Mon, 16 Nov 2026 09:30:00 +0800
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mix"
+
+--mix
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: base64
+
+5ZCE5L2N5aW977yMCgrpobnnm67kuo7kuIvlkajkuIDmraPlvI/lkK/liqjvvIzor7flh4bml7blj4LliqDjgIIKClRoYW5rcw==
+--alt
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: base64
+
+PHA+5ZCE5L2N5aW977yMPC9wPjxwPumhueebruS6juS4i+WRqOS4gDxiPuato+W8j+WQr+WKqDwvYj7vvIzor7flh4bml7blj4LliqDjgII8L3A+
+--alt--
+--mix
+Content-Type: text/plain; name="agenda.txt"
+Content-Disposition: attachment; filename="agenda.txt"
+Content-Transfer-Encoding: base64
+
+MS4g5LuL57uNCjIuIOiuoeWIkgo=
+--mix--
