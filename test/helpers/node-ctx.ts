@@ -9,6 +9,7 @@ const SOURCES: [string, string][] = [
     ["assets/pdfjs/", "node_modules/pdfjs-dist/"],
     ["assets/xberg/", "node_modules/@xberg-io/xberg-wasm/pkg/web/"],
     ["assets/ort/", "node_modules/onnxruntime-web/dist/"],
+    ["assets/pdfium/", "node_modules/@embedpdf/pdfium/dist/"],
 ];
 
 /** Real-model tests read weights from here (`<org>/<repo>/<path>`); unset = skipped. */
