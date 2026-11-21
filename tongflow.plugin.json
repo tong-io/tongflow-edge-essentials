@@ -1,7 +1,7 @@
 {
     "plugin": {
         "name": "Edge essentials",
-        "description": "On-device document parsing, PDF page rendering, audio/first-frame extraction and language detection in the browser. No models, no uploads."
+        "description": "On-device document parsing, PDF page rendering, audio/first-frame extraction, language detection, and knowledge-base chunking and embedding in the browser. Files never leave the device."
     },
     "runtime": "browser",
     "entry": "dist/index.js",
@@ -10,6 +10,9 @@
         { "nodeSlot": "render-pages", "method": "renderPages" },
         { "nodeSlot": "extract-audio", "method": "extractAudio" },
         { "nodeSlot": "get-first-frame", "method": "getFirstFrame" },
-        { "nodeSlot": "detect-language", "method": "detectLanguage" }
+        { "nodeSlot": "detect-language", "method": "detectLanguage" },
+        { "nodeSlot": "chunk-text", "method": "chunkText" },
+        { "nodeSlot": "embed-text", "method": "embedText", "models": ["bge-small-zh-v1.5", "bge-base-zh-v1.5"] },
+        { "nodeSlot": "kb-write", "method": "kbWrite" }
     ]
 }

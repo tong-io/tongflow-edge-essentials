@@ -1,42 +1,25 @@
-import { Asset, NodeSlot, SlotInput, SlotOutput } from "tongflow";
-import { EdgeMethodContext, EdgeSlotOutput } from "tongflow/engine/worker";
+import { a as SlotImpl, c as EdgeContext, i as NodeSlot, l as toEdgeContext, n as Asset, o as SlotInput, r as EdgeSlotOutput, s as SlotOutput, t as KbWriteSummary } from "./chunks/kb-write-COu0Ml-F.js";
+import { n as DEFAULT_EMBED_MODEL, r as EMBED_MODELS } from "./chunks/models-tOLu1qTX.js";
 /**
- * The plugin's internal context, built from the engine's {@link EdgeMethodContext}
- * by {@link toEdgeContext}. Slot implementations only see this, so the engine
- * protocol can change in one place.
+ * Where model weights are fetched from: the **model base URL**. Files live under
+ * `<modelBase>/<org>/<repo>/<path>`, mirroring the ModelScope / Hugging Face repo
+ * layout, so a host can mirror repos 1:1. Nothing here ever points at a third-party
+ * host; the default is the same-origin `/models/`.
+ *
+ * Resolution order:
+ *  1. `ctx.modelBase`, if the engine's method ctx ever carries one;
+ *  2. `globalThis.__TONGFLOW_EDGE_CONFIG__.modelBase` (set by the host on the main
+ *     thread for in-process use, or by the plugin entry from its `?modelBase=` query
+ *     parameter inside the worker; see {@link applyEntryConfig});
+ *  3. `/models/` on the origin the plugin was loaded from.
  */
-interface EdgeContext {
-  /** Aborted when the run is cancelled or the node is skipped. */
-  signal: AbortSignal;
-  /** Live status for the node: a 0..1 fraction and/or a short message. */
-  onProgress(p: {
-    fraction?: number;
-    message?: string;
-  }): void;
-  /** Byte progress while a lazily loaded asset (wasm, data) is downloaded. */
-  onDownload(p: {
-    loaded: number;
-    total?: number;
-    label: string;
-  }): void;
-  /**
-   * Map a plugin-relative asset path (for example `assets/xberg/xberg_wasm_bg.wasm`)
-   * to a same-origin URL the worker can fetch. Directory paths end with `/`.
-   */
-  resolveAsset(relPath: string): string;
+interface EdgeConfig {
+  /** Absolute or same-origin-relative URL of the model base; a trailing `/` is added. */
+  modelBase?: string;
 }
-/**
- * Adapt the engine's ctx. The engine has no asset resolver: assets live next to the
- * entry module (`dist/assets/…` beside `dist/index.js`), so URLs are resolved against
- * the entry's `import.meta.url`, which is the same origin the host loaded the plugin from.
- */
-export declare function toEdgeContext(ctx: EdgeMethodContext, assetBase: string | URL): EdgeContext;
-/**
- * A slot implementation against the plugin's internal {@link EdgeContext}.
- * `EdgeSlotOutput<S>` is `SlotOutput<S>` with ref fields allowed to carry an inline
- * `Asset` (`bytesBase64`), which the engine stores and turns into a file ref.
- */
-type SlotImpl<S extends NodeSlot> = (input: SlotInput<S>, ctx: EdgeContext) => Promise<EdgeSlotOutput<S>>;
+declare global {
+  var __TONGFLOW_EDGE_CONFIG__: EdgeConfig | undefined;
+}
 /** Method name (as in tongflow.plugin.json `slots[].method`) → engine method. */
 export declare const methods: {
   parseDocument: import("tongflow/engine/worker").EdgeMethod<"parse-document">;
@@ -44,6 +27,9 @@ export declare const methods: {
   extractAudio: import("tongflow/engine/worker").EdgeMethod<"extract-audio">;
   getFirstFrame: import("tongflow/engine/worker").EdgeMethod<"get-first-frame">;
   detectLanguage: import("tongflow/engine/worker").EdgeMethod<"detect-language">;
+  chunkText: import("tongflow/engine/worker").EdgeMethod<"chunk-text">;
+  embedText: import("tongflow/engine/worker").EdgeMethod<"embed-text">;
+  kbWrite: import("tongflow/engine/worker").EdgeMethod<"kb-write">;
 };
 /** Slot → method name, mirroring the manifest (kept in sync by a test). */
 export declare const slots: {
@@ -52,6 +38,9 @@ export declare const slots: {
   readonly "extract-audio": "extractAudio";
   readonly "get-first-frame": "getFirstFrame";
   readonly "detect-language": "detectLanguage";
+  readonly "chunk-text": "chunkText";
+  readonly "embed-text": "embedText";
+  readonly "kb-write": "kbWrite";
 };
 /** The slot implementations against the internal context (for hosts and tests that bring their own). */
 export declare const impls: {
@@ -60,6 +49,9 @@ export declare const impls: {
   extractAudio: SlotImpl<"extract-audio">;
   getFirstFrame: SlotImpl<"get-first-frame">;
   detectLanguage: SlotImpl<"detect-language">;
+  chunkText: SlotImpl<"chunk-text">;
+  embedText: SlotImpl<"embed-text">;
+  kbWrite: SlotImpl<"kb-write">;
 };
 declare const _default: {
   methods: {
@@ -68,6 +60,9 @@ declare const _default: {
     extractAudio: import("tongflow/engine/worker").EdgeMethod<"extract-audio">;
     getFirstFrame: import("tongflow/engine/worker").EdgeMethod<"get-first-frame">;
     detectLanguage: import("tongflow/engine/worker").EdgeMethod<"detect-language">;
+    chunkText: import("tongflow/engine/worker").EdgeMethod<"chunk-text">;
+    embedText: import("tongflow/engine/worker").EdgeMethod<"embed-text">;
+    kbWrite: import("tongflow/engine/worker").EdgeMethod<"kb-write">;
   };
 };
-export { type Asset, type EdgeContext, type EdgeSlotOutput, type NodeSlot, type SlotImpl, type SlotInput, type SlotOutput, _default as default };
+export { type Asset, DEFAULT_EMBED_MODEL, EMBED_MODELS, type EdgeConfig, type EdgeContext, type EdgeSlotOutput, type KbWriteSummary, type NodeSlot, type SlotImpl, type SlotInput, type SlotOutput, _default as default, toEdgeContext };

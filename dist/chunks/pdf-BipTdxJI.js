@@ -1,4 +1,0 @@
-import{i as e}from"./errors-RiNHu0UN.js";import{i as t}from"./text-CZ1iVbTh.js";import{openPdf as n}from"./pdfjs-Bxqo5T-x.js";const r={"⺟":`母`,"⻄":`西`,"⻅":`见`,"⻆":`角`,"⻉":`贝`,"⻋":`车`,"⻐":`钅`,"⻓":`长`,"⻔":`门`,"⻙":`韦`,"⻚":`页`,"⻛":`风`,"⻜":`飞`,"⻠":`饣`,"⻢":`马`,"⻥":`鱼`,"⻦":`鸟`,"⻧":`卤`,"⻨":`麦`,"⻩":`黄`,"⻪":`黾`,"⻬":`齐`,"⻮":`齿`,"⻰":`龙`,"⻳":`龟`};function i(e){return e.replace(/[\u2E80-\u2EFF\u2F00-\u2FDF]/g,e=>r[e]??e.normalize(`NFKC`))}async function a(r,a){let o=await n(r,a);try{let n=[],r=o.numPages;for(let s=1;s<=r;s++){e(a.signal);let c=await o.getPage(s),l=await c.getTextContent(),u=``;for(let e of l.items)typeof e.str==`string`&&(u+=e.str,e.hasEOL&&(u+=`
-`));n.push(t(i(u))),c.cleanup(),a.onProgress({fraction:s/r,message:`page ${s}/${r}`})}return n.filter(Boolean).join(`
-
-`)}finally{await o.loadingTask.destroy()}}export{a as parsePdf};

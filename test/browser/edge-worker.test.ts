@@ -8,7 +8,16 @@ describe("built plugin as a DOM-less module worker, over the engine protocol (Ch
     it("announces protocol v1 and the manifest's methods", async () => {
         const ready = await pluginWorker().ready;
         expect(ready.protocol).toBe(1);
-        expect(ready.methods?.sort()).toEqual(["detectLanguage", "extractAudio", "getFirstFrame", "parseDocument", "renderPages"]);
+        expect(ready.methods?.sort()).toEqual([
+            "chunkText",
+            "detectLanguage",
+            "embedText",
+            "extractAudio",
+            "getFirstFrame",
+            "kbWrite",
+            "parseDocument",
+            "renderPages",
+        ]);
     });
 
     it("detect-language", async () => {

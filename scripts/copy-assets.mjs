@@ -19,6 +19,10 @@ const COPIES = [
     ["pdfjs-dist/LICENSE", "pdfjs/LICENSE"],
     ["@xberg-io/xberg-wasm/pkg/web/xberg_wasm_bg.wasm", "xberg/xberg_wasm_bg.wasm"], // legacy formats (~41 MB)
     ["@xberg-io/xberg-wasm/LICENSE", "xberg/LICENSE"],
+    // onnxruntime-web, shared by every ML node: transformers.js imports `onnxruntime-web/webgpu`,
+    // whose bundle loads the asyncify build (WASM + WebGPU EPs).
+    ["onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm", "ort/ort-wasm-simd-threaded.asyncify.wasm"],
+    ["onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.mjs", "ort/ort-wasm-simd-threaded.asyncify.mjs"],
 ];
 
 const LIMIT = 100 * 1024 * 1024;

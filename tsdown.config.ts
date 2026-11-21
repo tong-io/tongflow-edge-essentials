@@ -4,7 +4,7 @@ import { defineConfig } from "tsdown";
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 export default defineConfig({
-    entry: ["src/index.ts"],
+    entry: ["src/index.ts", "src/embed-query.ts", "src/kb-host.ts"],
     format: "esm",
     platform: "browser",
     target: "es2022",
@@ -49,6 +49,8 @@ export default defineConfig({
                 { name: "xberg", test: /node_modules[\\/]@xberg-io[\\/]/ },
                 { name: "mediabunny", test: /node_modules[\\/]mediabunny[\\/]/ },
                 { name: "eld", test: /node_modules[\\/]eld[\\/]/ },
+                { name: "onnxruntime-web", test: /node_modules[\\/](onnxruntime-web|onnxruntime-common)[\\/]/ },
+                { name: "transformers", test: /node_modules[\\/]@huggingface[\\/]/ },
             ],
         },
     },

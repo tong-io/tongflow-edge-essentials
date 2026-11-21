@@ -8,6 +8,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const SOURCES: [string, string][] = [
     ["assets/pdfjs/", "node_modules/pdfjs-dist/"],
     ["assets/xberg/", "node_modules/@xberg-io/xberg-wasm/pkg/web/"],
+    ["assets/ort/", "node_modules/onnxruntime-web/dist/"],
 ];
 
 export function nodeResolveAsset(rel: string): string {
@@ -44,6 +45,7 @@ export function nodeCtx(signal: AbortSignal = new AbortController().signal): Edg
         onProgress: (p) => rec.progress.push(p),
         onDownload: (p) => rec.downloads.push(p),
         resolveAsset: nodeResolveAsset,
+        modelBase: "file:///models/",
         rec,
     };
 }
