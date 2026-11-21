@@ -34,6 +34,7 @@ describe("built plugin as a DOM-less module worker, over the engine protocol (Ch
             "splitVideo",
             "tableRecognize",
             "transcribe",
+            "transcribeTimestamp",
             "vadSegment",
         ]);
     });
