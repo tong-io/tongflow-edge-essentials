@@ -67,3 +67,47 @@ export function layoutRegions(
         };
     });
 }
+
+/* ---------- region filenames: the layout label travels with the crop ---------- */
+
+/** Longest page stem (UTF-8 bytes) kept in a region filename, so the label survives store-key length caps (TongFlow: 120). */
+export const REGION_STEM_MAX_BYTES = 80;
+
+/** Cut `s` to at most `max` UTF-8 bytes on a character boundary. */
+function utf8Prefix(s: string, max: number): string {
+    let bytes = 0, out = "";
+    for (const ch of s) {
+        const n = new TextEncoder().encode(ch).length;
+        if (bytes + n > max) break;
+        bytes += n;
+        out += ch;
+    }
+    return out;
+}
+
+/**
+ * `layout-detect`'s name for region `index` (0-based) of `count`:
+ * `<page stem>-r<NN>-<label>.png`. `NN` is the 1-based reading-order index, zero-padded to
+ * the width of `count`; `<label>` is the PP-DocLayout class (lowercase, `_`-separated). The
+ * stem is cut to {@link REGION_STEM_MAX_BYTES} bytes and has `/ \` replaced, so the
+ * `-r<NN>-<label>` tail is never truncated. Example: `page1-r03-table.png`.
+ */
+export function regionFilename(stem: string, index: number, count: number, label: string): string {
+    const pad = String(count).length;
+    const safe = utf8Prefix(stem.replace(/[\\/]/g, "_"), REGION_STEM_MAX_BYTES) || "page";
+    return `${safe}-r${String(index + 1).padStart(pad, "0")}-${label}.png`;
+}
+
+const REGION_TAIL = /-r(\d+)-([a-z][a-z_]*)\.[A-Za-z0-9]+$/;
+
+/**
+ * The PP-DocLayout label a {@link regionFilename} carries, or `undefined` when the name does
+ * not end in `-r<NN>-<label>.<ext>` with one of {@link DOCLAYOUT_LABELS} (any directory part is
+ * ignored).
+ */
+export function regionLabelOf(filename: string | undefined): string | undefined {
+    if (!filename) return undefined;
+    const base = filename.split(/[\\/]/).pop() ?? filename;
+    const m = REGION_TAIL.exec(base);
+    return m && DOCLAYOUT_LABELS.includes(m[2]!) ? m[2] : undefined;
+}

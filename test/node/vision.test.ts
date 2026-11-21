@@ -2,10 +2,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { type Box, columnOrder, convexHull, groupLines, joinPieces, minAreaRect, rectCorners } from "../../src/vision/geometry.js";
-import { DOCLAYOUT_LABELS, layoutRegions } from "../../src/vision/layout-post.js";
+import { DOCLAYOUT_LABELS, REGION_STEM_MAX_BYTES, layoutRegions, regionFilename, regionLabelOf } from "../../src/vision/layout-post.js";
+import { tableRecognize } from "../../src/slots/vision.js";
+import { nodeCtx } from "../helpers/node-ctx.js";
 import { cropSize, ctcDecode, ctcDictionary, dbPostprocess, detResize, yamlList } from "../../src/vision/ocr-post.js";
 import { ocrModel, ocrText } from "../../src/vision/ocr.js";
-import { boundariesFromScenes, diffBoundaries, predictionsToScenes, stitch, windowIndices } from "../../src/vision/shots.js";
+import { boundariesFromScenes, diffBoundaries, predictionsToScenes, stitch, transnetThreshold, windowIndices } from "../../src/vision/shots.js";
 import { decodeTable, matchCells, tableDictionary, tableHtml } from "../../src/vision/table-post.js";
 import { MANIFEST_MODELS } from "../../src/vision/catalog.js";
 import { dedupeObjects } from "../../src/vision/detect-objects.js";
@@ -176,6 +178,29 @@ describe("TransNetV2 windows and scenes", () => {
         expect(predictionsToScenes([0.9, 0.9])).toEqual([[0, 1]]);
     });
 
+    it("threshold: TransNetV2 probabilities as is, PySceneDetect's scale (the canvas default 20) mapped", () => {
+        expect(transnetThreshold(undefined)).toBe(0.5);
+        expect(transnetThreshold(0)).toBe(0.5);
+        expect(transnetThreshold(-3)).toBe(0.5);
+        expect(transnetThreshold(Number.NaN)).toBe(0.5);
+        expect(transnetThreshold("0.3")).toBe(0.5);
+        expect(transnetThreshold(0.3)).toBe(0.3);
+        expect(transnetThreshold(1)).toBe(0.99);
+        // The TongFlow canvas node fills in 20: before, nothing ever scored above 20 → one shot.
+        expect(transnetThreshold(20)).toBe(0.5);
+        expect(transnetThreshold(30)).toBeCloseTo(0.75);
+        expect(transnetThreshold(10)).toBe(0.25);
+        expect(transnetThreshold(2)).toBe(0.1);
+        expect(transnetThreshold(255)).toBe(0.9);
+        // The demo clip's three cuts score 1.0, 0.66 and 1.0: all found at the canvas default.
+        const pred = new Float32Array(100);
+        pred[20] = 0.998;
+        pred[50] = 0.663;
+        pred[80] = 1;
+        expect(boundariesFromScenes(predictionsToScenes(pred, transnetThreshold(20)))).toEqual([21, 51, 81]);
+        expect(boundariesFromScenes(predictionsToScenes(pred, 20))).toEqual([]);
+    });
+
     it("frame-difference fallback finds a hard cut", () => {
         const frame = (r: number, g: number, b: number, noise = 0) =>
             Uint8Array.from({ length: 48 * 27 * 3 }, (_, i) => [r, g, b][i % 3]! + ((i * 7) % 5) * noise);
@@ -197,6 +222,57 @@ describe("layout regions", () => {
         const r = layoutRegions(rows, 6, DOCLAYOUT_LABELS, 1200, 1700);
         expect(r.map((x) => x.label)).toEqual(["doc_title", "text", "table", "number"]);
         expect(r[2]!.box).toEqual([610, 200, 1100, 600]);
+    });
+});
+
+describe("layout region filenames carry the label", () => {
+    it("<stem>-r<NN>-<label>.png, NN 1-based and padded to the region count", () => {
+        expect(regionFilename("page1", 2, 12, "table")).toBe("page1-r03-table.png");
+        expect(regionFilename("page1", 0, 3, "paragraph_title")).toBe("page1-r1-paragraph_title.png");
+        expect(regionFilename("a/b\\c", 0, 1, "text")).toBe("a_b_c-r1-text.png");
+        expect(regionFilename("", 0, 1, "text")).toBe("page-r1-text.png");
+        // A long CJK stem is cut on a character boundary; the label tail stays whole.
+        const long = regionFilename("采购合同".repeat(20), 4, 120, "table");
+        expect(long.endsWith("-r005-table.png")).toBe(true);
+        expect(new TextEncoder().encode(long.slice(0, -"-r005-table.png".length)).length).toBeLessThanOrEqual(REGION_STEM_MAX_BYTES);
+        for (const label of DOCLAYOUT_LABELS) expect(regionLabelOf(regionFilename("采购合同-扫描件-p1-oriented", 7, 30, label))).toBe(label);
+    });
+
+    it("parses only a known PP-DocLayout label at the end of the name", () => {
+        expect(regionLabelOf("page1-r03-table.png")).toBe("table");
+        expect(regionLabelOf("page1-r04-text.png")).toBe("text");
+        expect(regionLabelOf("page1-r05-table_title.png")).toBe("table_title");
+        expect(regionLabelOf("opfs://3f2a9c/page1-r03-table.png")).toBe("table");
+        expect(regionLabelOf("mem://3f2a9c/采购合同-p1-r12-image.png")).toBe("image");
+        expect(regionLabelOf("page1-r03-table.jpeg")).toBe("table");
+        expect(regionLabelOf(undefined)).toBeUndefined();
+        expect(regionLabelOf("")).toBeUndefined();
+        expect(regionLabelOf("ec0e1fb1a2.png")).toBeUndefined(); // a store id: no label
+        expect(regionLabelOf("table.png")).toBeUndefined();
+        expect(regionLabelOf("report-r2-final.png")).toBeUndefined(); // not a layout class
+        expect(regionLabelOf("page1-r03-table")).toBeUndefined(); // no extension
+        expect(regionLabelOf("page1-r03-table.png.bak")).toBeUndefined();
+    });
+
+    it("table-recognize returns empty html for a non-table region without loading a model or decoding", async () => {
+        for (const label of ["text", "paragraph_title", "table_title", "image"]) {
+            const ctx = nodeCtx();
+            // Not an image at all: decoding would fail, so a success proves nothing was read.
+            const image = { bytesBase64: btoa("not a png"), mime: "image/png", filename: `page1-r04-${label}.png` };
+            const r = await tableRecognize({ image }, ctx);
+            expect(r).toEqual({ success: true, html: "" });
+            expect(ctx.rec.downloads).toEqual([]);
+            expect(ctx.rec.progress.at(-1)?.message).toBe(`skipped: layout region "${label}" is not a table`);
+        }
+    });
+
+    it("table-recognize runs as before for a table region or a name without a label", async () => {
+        // Node has no OffscreenCanvas, so "running" shows up as the canvas error, not a skip.
+        for (const filename of ["page1-r03-table.png", "ec0e1fb1a2.png", "table.png", undefined]) {
+            const r = await tableRecognize({ image: { bytesBase64: btoa("x"), mime: "image/png", ...(filename ? { filename } : {}) } }, nodeCtx());
+            expect(r.success, String(filename)).toBe(false);
+            expect(r.html).toBeUndefined();
+        }
     });
 });
 

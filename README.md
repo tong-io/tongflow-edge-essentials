@@ -21,7 +21,7 @@ understanding, GLM-OCR, image embeddings and key-point extraction with 250–850
 | `render-pages` | `renderPages` | PDF → one PNG per page (`pages`, `x-expand-each`), 150 DPI, longest side capped at 4096 px. Browser only (OffscreenCanvas). | pdf.js 6.5.438 |
 | `extract-audio` | `extractAudio` | The primary audio track of a video, **remuxed without re-encoding** when possible: AAC/AC-3 → `.m4a`, Opus/Vorbis → audio-only `.webm`, MP3 → `.mp3`, FLAC → `.flac`, PCM → `.wav`; anything else is transcoded to AAC with WebCodecs. | Mediabunny 1.66.2 |
 | `get-first-frame` | `getFirstFrame` | First decodable video frame as PNG (rotation applied). Browser only (WebCodecs); the codecs are whatever the browser decodes. | Mediabunny 1.66.2 |
-| `detect-language` | `detectLanguage` | Text → ISO 639-1 code (60 languages). Text without letters fails with a clear error. | eld 2.1.1 (`medium` n-grams) |
+| `detect-language` | `detectLanguage` | Text → ISO 639-1 code (60 languages). Never fails on content: text too short for eld (「谢谢，辛苦了。」) is decided by its script (`zh` when Han ideographs are at least half the letters, `ja` with kana, `ko` for Hangul); empty or letter-free text is `und`. | eld 2.1.1 (`medium` n-grams) |
 | `chunk-text` | `chunkText` | Texts → chunks for the knowledge base (see [Knowledge base](#knowledge-base-chunk-text-embed-text-kb-write)) | own code |
 | `embed-text` | `embedText` | Texts → TFV1 vectors, bge-small-zh-v1.5 (default) or bge-base-zh-v1.5 | transformers.js 4.3.2, onnxruntime-web 1.31.1 |
 | `kb-write` | `kbWrite` | Validates chunks + vectors and summarizes them; the host stores them | own code |
@@ -271,7 +271,12 @@ flipped short table cells ("+3%" → "%ε+") in tests, and page rotation is `ima
 
 **`layout-detect`.** PP-DocLayout-S (480², default) or -M (640²), the Paddle graph with fused NMS
 (`image` + `scale_factor` in, boxes in source pixels out), threshold 0.5 (`_params.threshold`),
-cross-class duplicates dropped. Reading order: running headers first; wide boxes (titles,
+cross-class duplicates dropped. Each region is a PNG named **`<page stem>-r<NN>-<label>.png`**
+(e.g. `page1-r03-table.png`): `NN` is the 1-based reading-order index, zero-padded to the width of
+the region count; `<label>` is the PP-DocLayout class (one of the 23 lowercase, `_`-separated
+names, e.g. `table`, `text`, `paragraph_title`); the page stem is cut to 80 UTF-8 bytes so the
+tail survives store-key length caps. This pattern is stable: downstream nodes rely on it.
+Reading order: running headers first; wide boxes (titles,
 abstracts) split the page into bands; inside a band columns are read left→right, each column
 top→bottom; page numbers and footers last. Only a community ONNX conversion exists
 (`Liyulingyue/PP-DocLayout-{S,M}-ONNX`); it was verified here on a rendered two-column A4 report
@@ -282,12 +287,20 @@ on the content) and its sha256 is pinned in `models.json`.
 structure tokens decoded with PaddleOCR's `merge_no_span_structure` dictionary; cell polygons are
 normalized to the padded square. OCR boxes are assigned to cells by PaddleOCR's `TableMatch`
 rule (best IoU, then corner distance). Feed it a table crop, e.g. a `layout-detect` region labelled
-`table`.
+`table`. When the input's filename carries a layout label (`…-r<NN>-<label>.<ext>`, see
+`layout-detect`) other than `table`, it succeeds at once with empty `html`, without loading a model
+or decoding the image, so a graph can fan every region into it; a name without a known label runs
+as before. (This needs an engine that keeps the producer's filename in its store keys, TongFlow's
+`fix/store-keys-keep-filename`.)
 
 **`split-video`.** Mediabunny decodes the primary video track and samples 48×27 frames at
 **10 fps** (`_params.fps`; at 4 fps TransNetV2 missed one cut and invented others on fast-moving
 test content), TransNetV2 runs over 100-frame windows (25-frame context, the reference padding),
-the single-frame head is thresholded at `threshold` (ABI input, default 0.5). Each cut is then
+the single-frame head is thresholded at `threshold` (ABI input, default 0.5). The model takes RGB in
+0..255 and its outputs already end in a sigmoid. `threshold` is shared with the PySceneDetect
+node's ContentDetector scale (0..~100; the TongFlow canvas fills in 20): a value in (0, 1] is a
+TransNetV2 probability, a value above 1 is mapped as `t / 40` (20 → 0.5), clamped to [0.1, 0.9].
+Before, 20 was read as a probability no frame reaches, so every video came out as one shot. Each cut is then
 refined to the exact frame by decoding the frames between the two samples, and snapped to a key
 frame within one frame. Parts are cut with a Mediabunny `Conversion`: **copied without
 re-encoding** when the cut is on a key frame (encoders usually place one at a scene change), else
@@ -359,7 +372,7 @@ storage quota.
 
 | Slot | Method | Model (`models`) | What it does |
 |---|---|---|---|
-| `image-gen-text` | `imageGenText` | `qwen3.5-0.8b` | What the canvas `imageGenTextNode` runs. `text` (prompt, may be blank) + optional `image`; honours `system`, `max_new_tokens` (512), `enable_thinking` (off), `temperature` (0.7, 0 = greedy), `top_p` (0.8), `top_k` (20). Without a prompt it describes the image **in Simplified Chinese**; the default system prompt keeps answers in Chinese. Without an image it is a plain text chat. |
+| `image-gen-text` | `imageGenText` | `qwen3.5-0.8b` | What the canvas `imageGenTextNode` runs. `text` (prompt, may be blank) + optional `image`; honours `system`, `max_new_tokens` (192), `enable_thinking` (off), `temperature` (0.7, 0 = greedy), `top_p` (0.8), `top_k` (20). Without a prompt it describes the image **in 1–3 Simplified Chinese sentences**, only what is visible, no invented names or numbers, 「无法辨认」 when unsure; the default system prompt keeps answers in Chinese. Without an image it is a plain text chat. Repetition control: see below. |
 | `image-describe` | `imageGenText` (same method) | `qwen3.5-0.8b` | `image` + optional `text` / `userPrompt`; same behaviour. |
 | `ocr-image` (alternative) | `ocrImageGlm` | `glm-ocr` | GLM-OCR page reading, Markdown out (tables included). Not the slot default: see [Alternative implementations](#alternative-implementations). |
 | `embed-image` | `embedImage` | `embeddinggemma-2` | One L2-normalized 768-d vector per image, as a `vectors` file in the TFV1 format (below). Same space as EmbeddingGemma 2 text embeddings (query prefix `task: search result \| query: `). The audio encoder is never loaded. |
@@ -370,6 +383,19 @@ Advanced params (`_params`): `max_new_tokens` everywhere; `max_pixels` for the v
 aspect ratio, because every 32 × 32 (Qwen) / 28 × 28 (GLM) square is one prompt token and prefill
 dominates the latency); `dims` for `embed-image` (768, or the Matryoshka sizes 512 / 256 / 128);
 `max_input_tokens` for `gen-text` (default 4096; longer text is cut).
+
+**Qwen3.5 repetition control** (`image-gen-text` / `image-describe` only). On a scanned contract
+page the 0.8B model used to loop 「背景为纯白色，内容清晰，……」 up to the old 512-token default
+and invent 「某某公司」-style names and amounts. Now: a repetition penalty of 1.1
+(`_params.repetition_penalty`, 1 = off) and a no-repeat 4-gram ban (`_params.no_repeat_ngram_size`,
+0 = off), both applied by our own logits processor to the **generated tokens only**
+(transformers.js's built-in options also count the prompt, which penalizes the instruction's own
+words and text the user quoted); `max_new_tokens` 192; a strict default prompt; and a post-filter
+(`trimRepetition`) that cuts the answer at the first repeated clause or back-to-back loop and, when
+the token limit was hit, drops an unfinished last sentence. `gen-text` (LFM2.5) keeps greedy
+decoding without any penalty (a 1.05 penalty corrupted its CJK output). A 0.8B model at 448² still
+cannot read a dense scanned page: it may name parties or amounts that are not on the page, so use
+it on photos and video frames, and OCR for documents.
 
 **Behaviour.**
 - *Streaming.* Generated tokens are streamed into `progress` (`extracting: 37 tokens · …tail`),
@@ -676,7 +702,13 @@ Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (
 fixtures in `test/fixtures/audio/` were synthesized for this repo with macOS `say` (voices Tingting and Reed). The
 vision fixtures `cat.jpg` and `astronaut.jpg` are scikit-image sample photos (chelsea: CC0, Stefan van
 der Walt; astronaut: NASA, public domain); `paper.pdf`, `shots.mp4` and `shots-gop.webm` are generated
-by `scripts/gen-vision-fixtures.mjs` (Chromium print, ffmpeg test sources).
+by `scripts/gen-vision-fixtures.mjs` (Chromium print, ffmpeg test sources). `product-intro.mp4`,
+`whiteboard.jpg` and `slide-frame.jpg` come from the scanall demo samples (`demo/samples/`, made by
+scanall's own demo tooling, all content self-authored and fictional; font Source Han Sans SC, OFL):
+`product-intro.mp4` is `产品介绍短片.mp4` with the video stream copied and the audio (macOS `say`
+narration) dropped; `whiteboard.jpg` is `白板照片.jpg` (it includes the scikit-image samples
+astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg` is the frame at
+11 s of `产品介绍短片.mp4` (`ffmpeg -ss 11 -frames:v 1`).
 
 ---
 
@@ -694,7 +726,7 @@ by `scripts/gen-vision-fixtures.mjs` (Chromium print, ffmpeg test sources).
 | `render-pages` | `renderPages` | PDF 每页输出一张 PNG(`pages`,`x-expand-each`)。分辨率 150 DPI,最长边不超过 4096 px。仅限浏览器(需要 OffscreenCanvas) | pdf.js 6.5.438 |
 | `extract-audio` | `extractAudio` | 抽取视频的主音轨,能不重编码就直接转封装:AAC/AC-3 转 `.m4a`,Opus/Vorbis 转纯音频 `.webm`,MP3 转 `.mp3`,FLAC 转 `.flac`,PCM 转 `.wav`。其它编码用 WebCodecs 转成 AAC | Mediabunny 1.66.2 |
 | `get-first-frame` | `getFirstFrame` | 视频第一帧可解码画面,输出 PNG(已按旋转信息校正)。仅限浏览器(WebCodecs),能解哪些编码取决于浏览器 | Mediabunny 1.66.2 |
-| `detect-language` | `detectLanguage` | 输出文本的 ISO 639-1 语种代码,支持 60 种语言。没有字母的文本会明确报错 | eld 2.1.1(medium 词典) |
+| `detect-language` | `detectLanguage` | 输出文本的 ISO 639-1 语种代码,支持 60 种语言。不会因内容失败:eld 判不出的短句(「谢谢，辛苦了。」)按文字系统判定(汉字占字母一半以上为 `zh`,有假名为 `ja`,谚文为 `ko`);空文本或没有字母的文本返回 `und` | eld 2.1.1(medium 词典) |
 | `chunk-text` | `chunkText` | 文本切成知识库片段(见下方「知识库节点」) | 自写 |
 | `embed-text` | `embedText` | 文本转 TFV1 向量,默认 bge-small-zh-v1.5,可换 bge-base-zh-v1.5 | transformers.js 4.3.2、onnxruntime-web 1.31.1 |
 | `kb-write` | `kbWrite` | 校验并汇总片段和向量,由宿主存储 | 自写 |
@@ -850,13 +882,19 @@ OffscreenCanvas/ImageBitmap 完成,不用 OpenCV.js,不碰 DOM。没有用 Paddl
   取 32 的倍数;DB 阈值读自模型的 `inference.yml`;识别高 48,按宽高比分批;字典直接从识别模型仓库的 `inference.yml` 读取,保证与权重一致。
   `_params.textline_orientation: true` 才启用 1 MB 的文本行方向分类(默认关:测试中它把表格里的短单元格翻转了,整页方向交给 `image-orient`)。
   模型选 `glm-ocr` 时经 `withModelAlternative` 转给 T3 的 GLM-OCR。
-- **版面**:PP-DocLayout-S(480²,默认)或 -M(640²),阈值 0.5(`_params.threshold`)。阅读顺序:页眉在前;宽块(标题、摘要)把页面分成横带,
+- **版面**:PP-DocLayout-S(480²,默认)或 -M(640²),阈值 0.5(`_params.threshold`)。每个区域一张 PNG,文件名固定为 **`<页面文件名主干>-r<NN>-<label>.png`**
+  (如 `page1-r03-table.png`):`NN` 是从 1 起的阅读顺序号,按区域总数位数补零;`<label>` 是 PP-DocLayout 类别(23 个小写、下划线分隔的名字,如 `table`、`text`、
+  `paragraph_title`);主干截到 80 个 UTF-8 字节,保证资产库截断长名时不丢后缀。下游节点依赖这个格式,不会随意改动。阅读顺序:页眉在前;宽块(标题、摘要)把页面分成横带,
   带内按栏从左到右、栏内自上而下;页码、页脚最后。S/M 只有社区 ONNX 转换件(`Liyulingyue/PP-DocLayout-{S,M}-ONNX`),已在渲染出的双栏 A4 报告上
   验证(标题、摘要、小标题、正文、表格 0.92、图、图题、页码都检出,框贴合内容),`models.json` 里钉死了 sha256。
 - **表格**:SLANet_plus 输入长边缩放到 488 并补齐到 488²;结构 token 按 PaddleOCR 的 `merge_no_span_structure` 字典解码;单元格多边形相对补齐后的方图归一化。
   OCR 框按 PaddleOCR `TableMatch` 规则(IoU 优先,再看角点距离)分配到单元格。输入应是表格裁剪图,例如 `layout-detect` 标为 `table` 的区域。
+  输入文件名带版面标签(`…-r<NN>-<label>.<扩展名>`)且标签不是 `table` 时,直接成功返回空 `html`,不加载模型、不解码图片,所以图上可以把所有区域都接进来;
+  文件名里解析不出已知标签时照常识别。(需要引擎在资产 key 里保留生产者的文件名,即 TongFlow 的 `fix/store-keys-keep-filename`。)
 - **切镜头**:Mediabunny 解码主视频轨,按 **10 fps** 采样 48×27 帧(`_params.fps`;4 fps 时 TransNetV2 在快速运动的测试素材上漏了一个切点、又多报了几个),
-  TransNetV2 以 100 帧窗口推理,单帧头按 `threshold`(ABI 输入,默认 0.5)判定;再解码两个采样点之间的帧把切点精确到帧,并在一帧之内对齐关键帧。
+  TransNetV2 以 100 帧窗口推理,单帧头按 `threshold`(ABI 输入,默认 0.5)判定(模型输入 0..255 的 RGB,输出已过 sigmoid)。
+  `threshold` 与 PySceneDetect 节点共用,后者是 ContentDetector 的 0..~100 量纲(TongFlow 画布默认填 20):(0, 1] 按 TransNetV2 概率用,大于 1 按 `t / 40`
+  换算(20 → 0.5)并限制在 [0.1, 0.9]。此前 20 被当成概率,没有帧能超过,任何视频都只切出 1 个镜头。再解码两个采样点之间的帧把切点精确到帧,并在一帧之内对齐关键帧。
   切点落在关键帧上时**直接转封装、不重编码**(编码器通常会在场景切换处放关键帧),否则用 WebCodecs 从切点重编码;浏览器编不了该编码时改为从前一个关键帧起拷贝。
   TransNetV2 未托管或加载失败时改用颜色直方图帧差检测(进度消息会说明)。只有一个镜头时原样返回输入。
 - **目标检测**:D-FINE nano 走 transformers.js 的 `object-detection` pipeline(共享的 `ml/transformers.ts`)。它的 sigmoid 分数偏低(测试猫图 0.6–0.7),
@@ -876,7 +914,7 @@ TransNetV2 © 2020 Tomáš Souček(MIT),ONNX 导出者 q502892879;D-FINE 由 Pet
 
 | Slot | 方法 | 模型(`models`) | 作用 |
 |---|---|---|---|
-| `image-gen-text` | `imageGenText` | `qwen3.5-0.8b` | 画布 `imageGenTextNode` 用的 slot。`text`(提示词,可为空)加可选 `image`;支持 `system`、`max_new_tokens`(512)、`enable_thinking`(默认关)、`temperature`(0.7,0 为贪心)、`top_p`(0.8)、`top_k`(20)。没有提示词时**用简体中文描述图片**,默认 system 提示也要求中文作答;没有图片时就是纯文本对话 |
+| `image-gen-text` | `imageGenText` | `qwen3.5-0.8b` | 画布 `imageGenTextNode` 用的 slot。`text`(提示词,可为空)加可选 `image`;支持 `system`、`max_new_tokens`(192)、`enable_thinking`(默认关)、`temperature`(0.7,0 为贪心)、`top_p`(0.8)、`top_k`(20)。没有提示词时**用 1–3 句简体中文描述图片**,只写看得见的内容,不编造名称和数字,看不清写「无法辨认」;默认 system 提示也要求中文作答;没有图片时就是纯文本对话。防复读见下文 |
 | `image-describe` | `imageGenText`(同一方法) | `qwen3.5-0.8b` | `image` 加可选 `text`/`userPrompt`,行为相同 |
 | `ocr-image`(备选实现) | `ocrImageGlm` | `glm-ocr` | GLM-OCR 整页识别,输出 Markdown(含表格)。不是该 slot 的默认实现,见下文「备选实现」 |
 | `embed-image` | `embedImage` | `embeddinggemma-2` | 每张图一条 L2 归一化的 768 维向量,以 TFV1 格式的 `vectors` 文件输出;与 EmbeddingGemma 2 文本向量同一空间。不加载音频编码器 |
@@ -885,6 +923,13 @@ TransNetV2 © 2020 Tomáš Souček(MIT),ONNX 导出者 q502892879;D-FINE 由 Pet
 高级参数(`_params`):均支持 `max_new_tokens`;视觉模型支持 `max_pixels`(Qwen3.5 默认 448²,GLM-OCR 默认 1024²,按像素预算等比缩放,
 因为每 32×32(Qwen)/28×28(GLM)像素就是一个提示 token,prefill 决定耗时);`embed-image` 支持 `dims`(768,或 Matryoshka 的
 512/256/128);`gen-text` 支持 `max_input_tokens`(默认 4096,超出截断)。
+
+**Qwen3.5 防复读**(仅 `image-gen-text`/`image-describe`)。此前对合同扫描页,0.8B 模型会反复输出「背景为纯白色，内容清晰，……」直到旧默认上限 512 token,
+还会编出「某某公司」之类的名称和金额。现在:重复惩罚 1.1(`_params.repetition_penalty`,1 为关闭)和 4-gram 不重复(`_params.no_repeat_ngram_size`,0 为关闭),
+由插件自己的 logits processor **只作用于生成出的 token**(transformers.js 自带的选项连提示词一起算,会压低指令里的词和用户引用的原文);`max_new_tokens` 默认 192;
+更严格的默认提示词;再加后处理 `trimRepetition`:在第一个重复的分句或首尾相接的循环处截断,触到 token 上限时去掉没写完的最后一句。
+`gen-text`(LFM2.5)保持贪心解码、不加惩罚(1.05 的惩罚会让它写错中文字)。0.8B 模型在 448² 下仍读不了密集的扫描页,可能写出页面上没有的单位名或金额,
+文档请用 OCR,图像理解用于照片和视频帧。
 
 **行为**
 

@@ -3,12 +3,19 @@
  * unit tested in Node.
  */
 
-/** Default instruction when an image arrives without a usable prompt. */
+/**
+ * Default instruction when an image arrives without a usable prompt. Strict on purpose: a
+ * 0.8B model asked for a "detailed" description of a scanned page padded it with invented
+ * names and amounts (「某某公司」「总金额为6%」) and looped 「背景为纯白色，内容清晰」.
+ */
 export const DESCRIBE_PROMPT_ZH =
-    "请用简体中文详细描述这张图片：先概括主体和场景，再说明重要的细节、文字内容（如有，请原样转写）、颜色和布局。";
+    "用 1 到 3 句简体中文描述这张图片：画面里有什么、是什么场景，能看清的文字照原样写出。" +
+    "只写确实看得见的内容，不要猜测，不要编造名称、人名、公司名、数字、金额或日期；看不清的地方写「无法辨认」。不要重复。";
 
-/** Default system prompt: answer in Simplified Chinese unless the user asks otherwise. */
-export const SYSTEM_ZH = "你是一个严谨的视觉助手。除非用户明确要求使用其他语言，否则始终使用简体中文回答，只描述图片中确实可见的内容。";
+/** Default system prompt: answer in Simplified Chinese unless the user asks otherwise; no invention. */
+export const SYSTEM_ZH =
+    "你是一个严谨的视觉助手。除非用户明确要求使用其他语言，否则始终使用简体中文回答。" +
+    "只描述图片中确实可见的内容，不编造名称、数字或金额；不确定时说「无法辨认」。回答简洁，不重复。";
 
 /** GLM-OCR's own task prompt for plain text recognition. */
 export const GLM_OCR_PROMPT = "Text Recognition:";

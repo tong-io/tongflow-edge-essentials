@@ -22,6 +22,7 @@ import {
     sharpestCut,
     sigmoid,
     stitch,
+    transnetThreshold,
     windowIndices,
 } from "./shots.js";
 
@@ -66,7 +67,13 @@ async function sampleFrames(mb: MB, track: VideoTrack, times: number[], ctx: Edg
     return frames;
 }
 
-/** Per-sample transition probability from TransNetV2 (single-frame head). */
+/**
+ * Per-sample transition probability from TransNetV2's single-frame head. The model takes
+ * `[1, 100, 27, 48, 3]` float32 RGB in 0..255 (it scales internally; fed 0..1, every
+ * output stays below 0.15 and no cut is found). The community export's two outputs
+ * (single-frame, then many-hot) already end in a sigmoid; a logit export is detected
+ * and squashed.
+ */
 async function transnet(ctx: EdgeContext, frames: Uint8Array[], span: [number, number]): Promise<Float32Array> {
     const s = await sessions(TRANSNET, async () => createDeviceSession(ctx, await fetchModelFile(ctx, TRANSNET, "transnetv2.onnx"), "wasm"));
     const wins = windowIndices(frames.length);
@@ -182,7 +189,7 @@ export async function splitVideo(input: SlotInput<"split-video">, ctx: EdgeConte
         let method = "transnetv2";
         try {
             const pred = await transnet(ctx, frames, [0.35, 0.6]);
-            const threshold = typeof input.threshold === "number" ? input.threshold : 0.5;
+            const threshold = transnetThreshold(input.threshold);
             boundaries = boundariesFromScenes(predictionsToScenes(pred, threshold));
         } catch (e) {
             if (ctx.signal.aborted) throw e;

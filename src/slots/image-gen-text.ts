@@ -5,21 +5,34 @@
  * (required, may be blank) plus an optional image, with optional `system`,
  * `max_new_tokens`, `enable_thinking`, `temperature`, `top_p`, `top_k`.
  * `image-describe` (image required, optional `text` / `userPrompt`) is served
- * by the same method. Without a prompt the model describes the image in
- * Simplified Chinese; the default system prompt keeps answers in Chinese.
+ * by the same method. Without a prompt the model describes the image in 1–3
+ * Simplified Chinese sentences; the default system prompt keeps answers in Chinese.
+ *
+ * Repetition: a 1.1 repetition penalty and a 4-gram ban on the generated tokens only
+ * (`_params.repetition_penalty`, `_params.no_repeat_ngram_size`; 1 / 0 turn them off), a
+ * default `max_new_tokens` of 192, and {@link cleanDescription} on the answer. Without them
+ * Qwen3.5-0.8B looped a clause up to the token limit on a scanned page.
  */
 
 import type { EdgeContext } from "../context.js";
 import { QWEN35_VL, pickModel, variantFor } from "../ml/catalog.js";
 import { generateText } from "../ml/generate.js";
 import { decodeImage } from "../ml/image.js";
-import { intParam, sampling, stripThinking, visionMessages } from "../ml/prompts.js";
+import { intParam, numParam, sampling, stripThinking, visionMessages } from "../ml/prompts.js";
+import { cleanDescription, generatedRepeatProcessor } from "../ml/repeat.js";
 import { modelConfig, withModel } from "../ml/runtime.js";
 import { QWEN_BUDGET, smartResize, withMaxPixels } from "../ml/sizing.js";
 import { requireWebGPU } from "../ml/webgpu.js";
 import type { Asset, EdgeSlotOutput, SlotInput } from "../types.js";
 import { EdgeError } from "../util/errors.js";
 import { guard, readAsset } from "./common.js";
+
+/** Default answer budget: 1–3 Chinese sentences fit in well under 192 tokens. */
+export const QWEN_MAX_NEW_TOKENS = 192;
+/** Applied to generated tokens only; LFM2.5 (`gen-text`) keeps none. */
+export const QWEN_REPETITION_PENALTY = 1.1;
+/** No 4-token sequence twice in the answer (about 4–8 Chinese characters). */
+export const QWEN_NO_REPEAT_NGRAM = 4;
 
 export type VisionTextInput = SlotInput<"image-gen-text"> | SlotInput<"image-describe">;
 
@@ -49,15 +62,19 @@ export async function imageGenText(input: VisionTextInput, ctx: EdgeContext): Pr
         if (ctx.nodeSlot === "image-describe" && !image) throw new EdgeError("missing image: expected an Asset with bytesBase64");
         const bytes = image ? readAsset(image, "image") : undefined;
         const messages = visionMessages({ prompt: promptOf(input), system: gen.system, hasImage: !!bytes });
-        const maxNewTokens = intParam(gen.max_new_tokens ?? params.max_new_tokens, 512, 1, 2048);
+        const maxNewTokens = intParam(gen.max_new_tokens ?? params.max_new_tokens, QWEN_MAX_NEW_TOKENS, 1, 2048);
+        const repeat = {
+            penalty: numParam(params.repetition_penalty, QWEN_REPETITION_PENALTY, 1, 2),
+            ngram: intParam(params.no_repeat_ngram_size, QWEN_NO_REPEAT_NGRAM, 0, 32),
+        };
         const samp = sampling(
             {
                 temperature: gen.temperature ?? (params.temperature as number | undefined),
                 top_p: gen.top_p ?? (params.top_p as number | undefined),
                 top_k: gen.top_k ?? (params.top_k as number | undefined),
             },
-            // Qwen3.5 model card, non-thinking mode. No repetition penalty: it also
-            // penalizes the prompt's tokens, which hurts transcribing text in the image.
+            // Qwen3.5 model card, non-thinking mode. Repetition is handled by `repeat` below,
+            // on the generated tokens only (transformers.js's own penalty also hits the prompt).
             { temperature: 0.7, top_p: 0.8, top_k: 20 },
         );
         const budget = withMaxPixels(QWEN_BUDGET, params.max_pixels);
@@ -90,15 +107,18 @@ export async function imageGenText(input: VisionTextInput, ctx: EdgeContext): Pr
                 } else {
                     inputs = await processor(prompt);
                 }
-                const { text } = await generateText(tf, ctx, {
+                const promptTokens = inputs.input_ids.dims.at(-1) ?? 0;
+                const useRepeat = repeat.penalty !== 1 || repeat.ngram > 0;
+                const { text, tokens } = await generateText(tf, ctx, {
                     model: m,
                     tokenizer: processor.tokenizer,
                     inputs,
                     maxNewTokens,
                     sampling: samp,
+                    ...(useRepeat ? { logitsProcessor: [generatedRepeatProcessor(tf, promptTokens, repeat)] } : {}),
                     label: bytes ? "describing" : "generating",
                 });
-                const out = stripThinking(text);
+                const out = cleanDescription(stripThinking(text), tokens >= maxNewTokens);
                 if (!out) throw new EdgeError("the model returned no text");
                 ctx.onProgress({ fraction: 1, message: "done" });
                 return { success: true, text: out };
