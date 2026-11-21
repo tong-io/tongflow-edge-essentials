@@ -237,6 +237,33 @@ describe.runIf(MODELS)("T3 nodes with real models from EDGE_MODELS_DIR (WebGPU)"
     );
 
     it(
+        "image-describe: Qwen3.5-0.8B on the scanall demo's whiteboard photo and video frame, short and without loops",
+        async (ctx) => {
+            if (!(await hasModel("onnx-community/Qwen3.5-0.8B-ONNX"))) ctx.skip("onnx-community/Qwen3.5-0.8B-ONNX is not in EDGE_MODELS_DIR");
+            // whiteboard.jpg = scanall demo/samples/白板照片.jpg; slide-frame.jpg = 产品介绍短片.mp4 at 11 s.
+            for (const [name, about] of [
+                ["whiteboard.jpg", /Q4|冲刺|白板|宇航|猫|咖啡/],
+                ["slide-frame.jpg", /核心能力/],
+            ] as const) {
+                const res = await fetch(`/test/fixtures/${name}`);
+                const bytes = new Uint8Array(await res.arrayBuffer());
+                const r = await invoke("imageGenText", "image-describe", { image: { bytesBase64: toBase64(bytes), mime: "image/jpeg", filename: name } });
+                log(`image-describe ${name}`, r.ms);
+                expect(r.out.error).toBeUndefined();
+                const text: string = r.out.text;
+                console.warn(`[t3] ${name}:`, text);
+                expect(text).toMatch(about);
+                // The default budget is 192 new tokens; the strict prompt asks for 1-3 sentences.
+                expect(text.length).toBeLessThan(400);
+                // No clause twice (the post-filter would have cut it).
+                const clauses = text.split(/[。！？；，、\n]/).map((c) => c.replace(/[\s\p{P}\p{S}]/gu, "")).filter((c) => c.length >= 4);
+                expect(new Set(clauses).size).toBe(clauses.length);
+            }
+        },
+        LONG,
+    );
+
+    it(
         "ocr-image (glm-ocr): GLM-OCR reads the text",
         async (ctx) => {
             if (!(await hasModel("onnx-community/GLM-OCR-ONNX"))) ctx.skip("onnx-community/GLM-OCR-ONNX is not in EDGE_MODELS_DIR");
