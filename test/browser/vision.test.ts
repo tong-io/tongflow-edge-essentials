@@ -311,29 +311,47 @@ describe.runIf(Boolean(__EDGE_MODELS__))("T1 slots with real models (EDGE_MODELS
         for (const d of durs) expect(d).toBeGreaterThan(1.5);
     });
 
-    it("detect-objects (D-FINE nano int8, transformers.js)", async () => {
-        const cat = await timed("detect-objects, 451×300 photo, cold", () => call("detectObjects", { image: fixtureSync.cat }));
+    it("detect-objects (D-FINE nano fp16 by default, int8 as the alternative; transformers.js)", async () => {
+        // Default (no model picked): fp16.
+        const cat = await timed("detect-objects fp16 (default), 451×300 photo, cold", () => call("detectObjects", { image: fixtureSync.cat }));
         expect(cat.out.error).toBeUndefined();
         const objs = JSON.parse(cat.out.objects) as { label: string; score: number; box: number[] }[];
-        console.warn("objects (cat.jpg):", cat.out.objects);
+        console.warn("objects fp16 (cat.jpg):", cat.out.objects);
         expect(objs[0]!.label).toBe("cat");
         expect(objs.filter((o) => o.label === "cat")).toHaveLength(1); // duplicates merged
         expect(objs[0]!.score).toBeGreaterThan(0.4);
         expect(objs[0]!.box[2]).toBeGreaterThan(objs[0]!.box[0]!);
-        expect(cat.downloads.some((d) => d.file?.includes("dfine_n_coco-ONNX/onnx/model_int8.onnx"))).toBe(true);
-        // The astronaut is a hard case for the int8 export (person ≈ 0.3–0.43 across runs): fp16 is asserted.
-        const astro = await timed("detect-objects, 512×512 photo, warm", () =>
-            call("detectObjects", { image: fixtureSync.astronaut }, { params: { threshold: 0.25 } }),
-        );
-        console.warn("objects int8 (astronaut.jpg, threshold 0.25):", astro.out.objects);
-        const fp16 = await timed("detect-objects fp16, 451×300 photo, cold", () => call("detectObjects", { image: fixtureSync.cat }, { model: "dfine-nano-fp16" }));
-        console.warn("objects fp16 (cat.jpg):", fp16.out.objects);
-        expect(JSON.parse(fp16.out.objects)[0].label).toBe("cat");
-        const a16 = await timed("detect-objects fp16, 512×512 photo, warm", () =>
-            call("detectObjects", { image: fixtureSync.astronaut }, { model: "dfine-nano-fp16" }),
-        );
+        expect(cat.downloads.some((d) => d.file?.includes("dfine_n_coco-ONNX/onnx/model_fp16.onnx"))).toBe(true);
+        expect(cat.downloads.some((d) => d.file?.includes("model_int8.onnx"))).toBe(false);
+        const a16 = await timed("detect-objects fp16 (default), 512×512 photo, warm", () => call("detectObjects", { image: fixtureSync.astronaut }));
         console.warn("objects fp16 (astronaut.jpg):", a16.out.objects);
         expect((JSON.parse(a16.out.objects) as { label: string }[]).map((o) => o.label)).toContain("person");
+
+        // The int8 alternative, picked by model id.
+        const int8 = await timed("detect-objects int8, 451×300 photo, cold", () => call("detectObjects", { image: fixtureSync.cat }, { model: "dfine-nano" }));
+        expect(int8.out.error).toBeUndefined();
+        console.warn("objects int8 (cat.jpg):", int8.out.objects);
+        expect(JSON.parse(int8.out.objects)[0].label).toBe("cat");
+        expect(int8.downloads.some((d) => d.file?.includes("dfine_n_coco-ONNX/onnx/model_int8.onnx"))).toBe(true);
+        // The astronaut is a hard case for the int8 export (person ≈ 0.3–0.43 across runs): only logged.
+        const astro = await timed("detect-objects int8, 512×512 photo, warm", () =>
+            call("detectObjects", { image: fixtureSync.astronaut }, { model: "dfine-nano", params: { threshold: 0.25 } }),
+        );
+        console.warn("objects int8 (astronaut.jpg, threshold 0.25):", astro.out.objects);
+    });
+
+    it("raw-ORT nodes and transformers.js share one onnxruntime-web and one wasm download", async () => {
+        // This worker has run both kinds above (PP-OCR / TransNetV2 on onnxruntime-web directly, D-FINE through transformers.js).
+        const ort = (await (await fetch("/__ort-requests")).json()) as string[];
+        console.warn("ort asset requests:", ort.join(", "));
+        const wasm = ort.filter((r) => r.endsWith(".wasm"));
+        // At most once (zero when an earlier file of this run already put it in the Cache API), and only the one build.
+        expect(wasm.filter((r) => r === "GET ort-wasm-simd-threaded.asyncify.wasm").length).toBeLessThanOrEqual(1);
+        expect(wasm.filter((r) => r !== "GET ort-wasm-simd-threaded.asyncify.wasm")).toEqual([]);
+        expect(ort.filter((r) => r.endsWith(".mjs") && !r.endsWith("ort-wasm-simd-threaded.asyncify.mjs"))).toEqual([]);
+        // transformers.js never reached for its own (rewritten CDN) copy.
+        const models = (await (await fetch("/__model-requests")).json()) as string[];
+        expect(models.filter((r) => r.includes("onnxruntime-web"))).toEqual([]);
     });
 
     it("timings", () => {

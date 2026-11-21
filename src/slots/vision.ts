@@ -26,6 +26,6 @@ export const tableRecognize: SlotImpl<"table-recognize"> = (input, ctx) =>
 export const splitVideo: SlotImpl<"split-video"> = (input, ctx) =>
     guard(ctx, async () => (await import("../vision/split-video.js")).splitVideo(input, ctx));
 
-/** `detect-objects`: D-FINE nano (COCO) via transformers.js → `objects` JSON. */
+/** `detect-objects`: D-FINE nano (COCO; fp16 default, int8 alternative) via transformers.js → `objects` JSON. */
 export const detectObjects: SlotImpl<"detect-objects"> = (input, ctx) =>
     guard(ctx, async () => (await import("../vision/detect-objects.js")).detectObjects(input, ctx));

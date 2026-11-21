@@ -527,36 +527,6 @@
         }
     },
     {
-        "id": "dfine-nano",
-        "source": "modelscope:onnx-community/dfine_n_coco-ONNX",
-        "files": [
-            "config.json",
-            "preprocessor_config.json",
-            "onnx/model_int8.onnx"
-        ],
-        "checksums": {
-            "config.json": {
-                "size": 6597,
-                "sha256": "a5c7533f3b72be6bb102b93e1b34ca3643af4e0590408a7881543cbb0aa80c4c"
-            },
-            "preprocessor_config.json": {
-                "size": 444,
-                "sha256": "cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1"
-            },
-            "onnx/model_int8.onnx": {
-                "size": 4477908,
-                "sha256": "e1b9e192915dd19bcffad14ea205942bc6bae1363858cdedbeaf3ef7ec310e52"
-            }
-        },
-        "slots": [
-            "detect-objects"
-        ],
-        "approxMB": 4.5,
-        "license": "Apache-2.0",
-        "licenseUrl": "https://github.com/Peterande/D-FINE/blob/master/LICENSE",
-        "attribution": "D-FINE by Peterande et al. (https://github.com/Peterande/D-FINE/blob/master/LICENSE), ONNX conversion by onnx-community; COCO class names."
-    },
-    {
         "id": "dfine-nano-fp16",
         "source": "modelscope:onnx-community/dfine_n_coco-ONNX",
         "files": [
@@ -582,6 +552,36 @@
             "detect-objects"
         ],
         "approxMB": 7.9,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/Peterande/D-FINE/blob/master/LICENSE",
+        "attribution": "D-FINE by Peterande et al. (https://github.com/Peterande/D-FINE/blob/master/LICENSE), ONNX conversion by onnx-community; COCO class names."
+    },
+    {
+        "id": "dfine-nano",
+        "source": "modelscope:onnx-community/dfine_n_coco-ONNX",
+        "files": [
+            "config.json",
+            "preprocessor_config.json",
+            "onnx/model_int8.onnx"
+        ],
+        "checksums": {
+            "config.json": {
+                "size": 6597,
+                "sha256": "a5c7533f3b72be6bb102b93e1b34ca3643af4e0590408a7881543cbb0aa80c4c"
+            },
+            "preprocessor_config.json": {
+                "size": 444,
+                "sha256": "cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1"
+            },
+            "onnx/model_int8.onnx": {
+                "size": 4477908,
+                "sha256": "e1b9e192915dd19bcffad14ea205942bc6bae1363858cdedbeaf3ef7ec310e52"
+            }
+        },
+        "slots": [
+            "detect-objects"
+        ],
+        "approxMB": 4.5,
         "license": "Apache-2.0",
         "licenseUrl": "https://github.com/Peterande/D-FINE/blob/master/LICENSE",
         "attribution": "D-FINE by Peterande et al. (https://github.com/Peterande/D-FINE/blob/master/LICENSE), ONNX conversion by onnx-community; COCO class names."

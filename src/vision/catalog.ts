@@ -13,6 +13,6 @@ export const MANIFEST_MODELS: Record<string, { slot: string; repos: string[] }> 
     // Cell text comes from the default OCR model.
     "slanet-plus": { slot: "table-recognize", repos: ["slanet-plus", "pp-ocrv6-small-det", "pp-ocrv6-small-rec"] },
     transnetv2: { slot: "split-video", repos: ["transnetv2"] },
-    "dfine-nano": { slot: "detect-objects", repos: ["dfine-nano"] },
     "dfine-nano-fp16": { slot: "detect-objects", repos: ["dfine-nano-fp16"] },
+    "dfine-nano": { slot: "detect-objects", repos: ["dfine-nano"] },
 };
