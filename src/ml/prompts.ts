@@ -90,6 +90,27 @@ export const KEY_POINTS_SYSTEM_ZH =
     "每条要点是一句简短、完整的话，写明文中的事实、数字、日期、名称、决定或结论，不得编造。" +
     `要点使用简体中文。最多 ${MAX_KEY_POINTS} 条，按重要性排序。`;
 
+/**
+ * The stricter instruction for Qwen3.5-0.8B (`qwen3.5-0.8b-text`): a 0.8B chat model
+ * paraphrases freely and pads with plausible names and numbers (as it did on image
+ * descriptions), so facts must be copied, nothing added, nothing repeated.
+ */
+export const KEY_POINTS_STRICT_SYSTEM =
+    "You extract the key points of a document. Return JSON only, shaped as " +
+    '{"key_points": ["...", "..."]}. Each key point is one short, self-contained sentence ' +
+    "that states only what the text explicitly says: a fact, number, date, name, decision or conclusion. " +
+    "Copy numbers, amounts, dates, names and company names exactly as written. " +
+    "Do not guess, infer, add, summarize beyond the text or invent anything; no opinions or advice. " +
+    "Write the key points in the same language as the text. " +
+    `Give at most ${MAX_KEY_POINTS} key points, most important first, without repeating one.`;
+
+export const KEY_POINTS_STRICT_SYSTEM_ZH =
+    '你负责从原文中提取要点。只输出 JSON，格式为 {"key_points": ["...", "..."]}。' +
+    "每条要点是一句简短、完整的话，只写原文明确写出的事实、数字、日期、名称、决定或结论。" +
+    "数字、金额、日期、人名、公司名必须照原文原样抄写。" +
+    "不得推测、引申、补充或编造原文没有的内容，不写评价或建议。" +
+    `要点使用简体中文。最多 ${MAX_KEY_POINTS} 条，按重要性排序，不要重复。`;
+
 /** True when CJK ideographs make up a noticeable share of the letters. */
 export function isMostlyCjk(text: string): boolean {
     const cjk = text.match(/[\u3400-\u9fff\uf900-\ufaff]/g)?.length ?? 0;
@@ -98,8 +119,11 @@ export function isMostlyCjk(text: string): boolean {
     return cjk > 0 && cjk >= latin / 5;
 }
 
-/** Messages for `gen-text`: `userPrompt` (optional) narrows what to extract. */
-export function keyPointMessages(text: string, userPrompt?: string): ChatMessage[] {
+/**
+ * Messages for `gen-text`: `userPrompt` (optional) narrows what to extract; `strict` uses
+ * the stricter no-invention instruction ({@link KEY_POINTS_STRICT_SYSTEM}).
+ */
+export function keyPointMessages(text: string, userPrompt?: string, opts: { strict?: boolean } = {}): ChatMessage[] {
     const focus = userPrompt?.trim();
     const zh = isMostlyCjk(text);
     const user = zh
@@ -110,7 +134,10 @@ export function keyPointMessages(text: string, userPrompt?: string): ChatMessage
           ? `Instructions: ${focus}\n\nText:\n${text}`
           : `Text:\n${text}`;
     return [
-        { role: "system", content: zh ? KEY_POINTS_SYSTEM_ZH : KEY_POINTS_SYSTEM },
+        {
+            role: "system",
+            content: opts.strict ? (zh ? KEY_POINTS_STRICT_SYSTEM_ZH : KEY_POINTS_STRICT_SYSTEM) : zh ? KEY_POINTS_SYSTEM_ZH : KEY_POINTS_SYSTEM,
+        },
         { role: "user", content: user },
     ];
 }
@@ -155,6 +182,38 @@ export function parseKeyPoints(raw: string): { key_points: string[] } {
         .map((l) => l.replace(/^\s*(?:[-*•·]|\d+[.)、]|[（(]?\d+[）)])\s*/, "").trim())
         .filter(Boolean);
     return { key_points: tidy(lines) };
+}
+
+/** Letters and digits only, for comparing key points. */
+const bare = (s: string) => s.replace(/[\s\p{P}\p{S}]/gu, "");
+
+function bigrams(s: string): Set<string> {
+    const out = new Set<string>();
+    const chars = Array.from(s);
+    if (chars.length === 1) out.add(chars[0]!);
+    for (let i = 0; i + 1 < chars.length; i++) out.add(chars[i]! + chars[i + 1]!);
+    return out;
+}
+
+/**
+ * Drop key points that only restate earlier ones: a point whose character bigrams
+ * (punctuation and spaces ignored) are at least `threshold` covered by the points kept
+ * before it. A new fact brings new names or numbers, so it stays. Qwen3.5-0.8B tends to
+ * close its list by repeating earlier points in other words.
+ */
+export function dropRestatedPoints(points: string[], threshold = 0.8): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const p of points) {
+        const grams = bigrams(bare(p));
+        if (!grams.size) continue;
+        let covered = 0;
+        for (const g of grams) if (seen.has(g)) covered++;
+        if (out.length && covered / grams.size >= threshold) continue;
+        out.push(p);
+        for (const g of grams) seen.add(g);
+    }
+    return out;
 }
 
 /* ---------- parameters ---------- */

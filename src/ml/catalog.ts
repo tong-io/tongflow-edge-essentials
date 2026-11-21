@@ -22,6 +22,8 @@ export interface ModelVariant {
 }
 
 export interface T3Model {
+    /** Generation stops at any of these token ids (overrides the repo's `generation_config.json`). */
+    eosTokenIds?: number[];
     /** The id hosts pick in the node's model dropdown (manifest `models`). */
     id: string;
     /** Display name. */
@@ -91,7 +93,28 @@ export const LFM25_350M: T3Model = {
     fallback: { dtype: { model: "q4" }, approxMB: 297 },
 };
 
-export const T3_MODELS = [QWEN35_VL, GLM_OCR, EMBEDDING_GEMMA_2, LFM25_350M] as const;
+/**
+ * Qwen3.5-0.8B with only the text decoder (no vision tower), the `qwen3.5-0.8b-text`
+ * alternative of `gen-text`: Apache-2.0, so key-point extraction can run without the LFM
+ * license. This text-only export (one graph, tied embeddings) downloads 490 MB (q4f16);
+ * loading the multimodal repo's `embed_tokens` + `decoder_model_merged` would be 604 MB.
+ * Its `generation_config.json` stops only at `<|endoftext|>` (248044); chat turns end with
+ * `<|im_end|>` (248046), which is also the EOS the structured-output constraint emits.
+ */
+export const QWEN35_TEXT: T3Model = {
+    id: "qwen3.5-0.8b-text",
+    name: "Qwen3.5-0.8B (text)",
+    repo: "onnx-community/Qwen3.5-0.8B-Text-ONNX",
+    license: "Apache-2.0",
+    licenseUrl: "https://www.modelscope.cn/models/Qwen/Qwen3.5-0.8B/file/view/master/LICENSE",
+    attribution: "Qwen3.5-0.8B by the Qwen team, Alibaba Cloud (text-only ONNX export by onnx-community)",
+    eosTokenIds: [248046, 248044],
+    files: TEXT_FILES,
+    f16: { dtype: { model: "q4f16" }, approxMB: 490 },
+    fallback: { dtype: { model: "q4" }, approxMB: 571 },
+};
+
+export const T3_MODELS = [QWEN35_VL, GLM_OCR, EMBEDDING_GEMMA_2, LFM25_350M, QWEN35_TEXT] as const;
 
 /* ---------- alternative implementations (picked in the canvas "换实现" menu) ---------- */
 

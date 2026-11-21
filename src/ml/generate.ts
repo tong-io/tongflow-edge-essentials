@@ -23,6 +23,8 @@ export interface GenerateArgs {
     sampling: SamplingOptions;
     /** Extra logits processors (structured output). */
     logitsProcessor?: unknown;
+    /** Further `generate()` options (e.g. `eos_token_id`). */
+    generation?: Record<string, unknown>;
     label?: string;
     /**
      * Leading ids of the output sequence that are not generated text. Default: the prompt length
@@ -60,6 +62,7 @@ export async function generateText(
             ...args.inputs,
             max_new_tokens: args.maxNewTokens,
             ...args.sampling,
+            ...args.generation,
             streamer,
             stopping_criteria: [stop],
             ...(args.logitsProcessor ? { logits_processor: args.logitsProcessor } : {}),
