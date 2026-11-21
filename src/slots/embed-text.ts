@@ -20,9 +20,10 @@ export function mlRuntime(ctx: EdgeContext): MlRuntime {
 }
 
 /**
- * `embed-text`: texts → one L2-normalized vector each (bge-small-zh-v1.5 q8 by default,
- * bge-base-zh-v1.5 as the alternative model), packed as TFV1 in the `vectors` file.
- * Documents get no instruction prefix (BGE uses one for queries only).
+ * `embed-text`: texts → one L2-normalized vector each (bge-small-zh-v1.5 q8 by default;
+ * bge-base-zh-v1.5, granite-embedding-97m-multilingual-r2 and, on WebGPU, harrier-oss-v1-270m
+ * as alternative models), packed as TFV1 in the `vectors` file. Documents get no
+ * instruction prefix (every model here uses one for queries only, if at all).
  */
 export const embedText: SlotImpl<"embed-text"> = (input, ctx) =>
     guard(ctx, async () => {
