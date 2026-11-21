@@ -1,0 +1,49 @@
+ffmpeg.wasm core used by tongflow-edge-essentials
+=================================================
+
+What
+    @ffmpeg/core 0.12.10 (npm), the official single-threaded ffmpeg.wasm build:
+    dist/esm/ffmpeg-core.js (111,804 bytes, SHA-256 67a48f11645f85439f3fde4f2119042c16b374b910206b7a7a24f342e28dcae3)
+    dist/esm/ffmpeg-core.wasm (32,232,419 bytes, SHA-256 9f57947a5bd530d8f00c5b3f2cb2a3492faa7e5d823315342d6a8656d0a6b7b7)
+    Unmodified. It is not part of the plugin bundle (dist/): the plugin downloads it on
+    first use from the host's model base, at
+    <modelBase>/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.{js,wasm},
+    checks size and SHA-256, and runs it in a dedicated Web Worker.
+
+License
+    GNU General Public License, version 2 or (at your option) any later version
+    (GPL-2.0-or-later). The full text is in GPL-2.0.txt next to this file.
+    FFmpeg is built with --enable-gpl and links GPL libraries (x264, x265), so the
+    combined work is under the GPL. tongflow-edge-essentials itself is AGPL-3.0-only;
+    GPL-2.0-or-later code may be combined with it under the GPL-3.0 option
+    (AGPL-3.0 section 13 / GPL-3.0 section 13).
+
+Corresponding source (GPL-2.0 section 3)
+    Build scripts and bindings: https://github.com/ffmpegwasm/ffmpeg.wasm
+        commit 71aa99d37c02a7b4c435275ca9ef50e612f6efa1
+        (tag v12.15, "RELEASE: @ffmpeg/core and @ffmpeg/core-mt v0.12.10")
+        https://github.com/ffmpegwasm/ffmpeg.wasm/tree/71aa99d37c02a7b4c435275ca9ef50e612f6efa1
+        (Dockerfile, build/*.sh, src/bind, src/fftools; built with emscripten/emsdk:3.1.40)
+    FFmpeg n5.1.4: https://github.com/FFmpeg/FFmpeg/tree/n5.1.4 (LGPL-2.1+/GPL-2.0+)
+    Libraries, at the branches the Dockerfile pins:
+        x264 4-cores            https://github.com/ffmpegwasm/x264         (GPL-2.0+)
+        x265 3.4                https://github.com/ffmpegwasm/x265         (GPL-2.0+)
+        libvpx v1.13.1          https://github.com/ffmpegwasm/libvpx       (BSD-3-Clause)
+        LAME master             https://github.com/ffmpegwasm/lame         (LGPL-2.0+)
+        libogg v1.3.4           https://github.com/ffmpegwasm/Ogg          (BSD-3-Clause)
+        libtheora v1.1.1        https://github.com/ffmpegwasm/theora       (BSD-3-Clause)
+        Opus v1.3.1             https://github.com/ffmpegwasm/opus         (BSD-3-Clause)
+        libvorbis v1.3.3        https://github.com/ffmpegwasm/vorbis       (BSD-3-Clause)
+        zlib v1.2.11            https://github.com/ffmpegwasm/zlib         (Zlib)
+        libwebp v1.3.2          https://github.com/ffmpegwasm/libwebp      (BSD-3-Clause)
+        FreeType VER-2-10-4     https://github.com/ffmpegwasm/freetype2    (FTL / GPL-2.0)
+        FriBidi v1.0.9          https://github.com/fribidi/fribidi         (LGPL-2.1+)
+        HarfBuzz 5.2.0          https://github.com/harfbuzz/harfbuzz       (MIT)
+        libass 0.15.0           https://github.com/libass/libass           (ISC)
+        zimg release-3.0.5      https://github.com/sekrit-twc/zimg         (WTFPL)
+    Anyone who receives the core from a host running this plugin may obtain the
+    corresponding source from the URLs above; a host that mirrors the core should
+    mirror this NOTICE and GPL-2.0.txt next to it.
+
+Trademarks
+    FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.

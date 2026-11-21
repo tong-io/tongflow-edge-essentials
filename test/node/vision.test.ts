@@ -294,6 +294,7 @@ describe("manifest, models.json and the model catalog agree", () => {
             expect(entry, slot).toHaveLength(1);
             for (const m of entry[0]!.models ?? []) {
                 if (m === "glm-ocr") continue; // T3's implementation behind the same slot
+                if (m === "transnetv2+ffmpeg-wasm") continue; // same model, frames and shots by ffmpeg.wasm
                 expect(MANIFEST_MODELS[m], m).toBeDefined();
                 expect(MANIFEST_MODELS[m]!.slot).toBe(slot);
                 for (const repo of MANIFEST_MODELS[m]!.repos) expect(ids.has(repo), repo).toBe(true);

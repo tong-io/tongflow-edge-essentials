@@ -5,7 +5,8 @@
 ## English
 
 Official [TongFlow](https://github.com/tong-io/tongflow) **browser edge plugin**. It parses
-documents, renders PDF pages, pulls audio and first frames out of videos, detects the language
+documents, renders PDF pages, pulls audio and first/last frames out of videos, joins, mutes and
+re-dubs videos (with ffmpeg.wasm for formats the browser cannot read), detects the language
 of a text, and chunks and embeds text for an on-device knowledge base. All of it runs inside the
 user's browser, in a Web Worker, through TongFlow's browser engine. Files never leave the device.
 The document, media and language nodes are **T0 (zero-model)**; `embed-text` downloads a 24 MB
@@ -19,8 +20,12 @@ understanding, GLM-OCR, image embeddings and key-point extraction with 250–850
 |---|---|---|---|
 | `parse-document` | `parseDocument` | Any supported document → Markdown-flavoured `text`. `images` is always `[]` for now. | see below |
 | `render-pages` | `renderPages` | PDF → one PNG per page (`pages`, `x-expand-each`), 150 DPI, longest side capped at 4096 px. Browser only (OffscreenCanvas). | pdf.js 6.5.438 |
-| `extract-audio` | `extractAudio` | The primary audio track of a video, **remuxed without re-encoding** when possible: AAC/AC-3 → `.m4a`, Opus/Vorbis → audio-only `.webm`, MP3 → `.mp3`, FLAC → `.flac`, PCM → `.wav`; anything else is transcoded to AAC with WebCodecs. | Mediabunny 1.66.2 |
-| `get-first-frame` | `getFirstFrame` | First decodable video frame as PNG (rotation applied). Browser only (WebCodecs); the codecs are whatever the browser decodes. | Mediabunny 1.66.2 |
+| `extract-audio` | `extractAudio` | The primary audio track of a video, **remuxed without re-encoding** when possible: AAC/AC-3 → `.m4a`, Opus/Vorbis → audio-only `.webm`, MP3 → `.mp3`, FLAC → `.flac`, PCM → `.wav`; anything else is transcoded to AAC with WebCodecs (MP3 when ffmpeg.wasm does it). | Mediabunny 1.66.2; ffmpeg.wasm fallback, see [Media nodes and ffmpeg.wasm](#media-nodes-and-ffmpegwasm) |
+| `get-first-frame` | `getFirstFrame` | First decodable video frame as PNG (rotation applied). WebCodecs; ffmpeg.wasm for codecs the browser does not decode. | same |
+| `get-last-frame` | `getLastFrame` | Last frame (presentation order) as PNG, `<stem>-last.png`. | same |
+| `concat-videos` | `concatVideos` | `videos` end to end → one MP4: stream copy when every clip has the same codecs, size and codec setup, else re-encoded by ffmpeg.wasm to H.264/AAC at the largest size (smaller clips centred). | same |
+| `remove-video-audio` | `removeVideoAudio` | The video stream copied into a silent MP4 (`-an -vcodec copy`; H.264 only when the codec cannot go into MP4). | same |
+| `merge-video-audio` | `mergeVideoAudio` | `video`'s video stream copied + `audio`'s audio as AAC → MP4, cut to the shorter one (`-shortest`). | same |
 | `detect-language` | `detectLanguage` | Text → ISO 639-1 code (60 languages). Never fails on content: text too short for eld (「谢谢，辛苦了。」) is decided by its script (`zh` when Han ideographs are at least half the letters, `ja` with kana, `ko` for Hangul); empty or letter-free text is `und`. | eld 2.1.1 (`medium` n-grams) |
 | `chunk-text` | `chunkText` | Texts → chunks for the knowledge base (see [Knowledge base](#knowledge-base-chunk-text-embed-text-kb-write)) | own code |
 | `embed-text` | `embedText` | Texts → TFV1 vectors, bge-small-zh-v1.5 (default) or bge-base-zh-v1.5 | transformers.js 4.3.2, onnxruntime-web 1.31.1 |
@@ -33,7 +38,7 @@ understanding, GLM-OCR, image embeddings and key-point extraction with 250–850
 | `image-orient` | `imageOrient` | Image → upright page PNG (PP-LCNet doc_ori) | same |
 | `layout-detect` | `layoutDetect` | Page image → `layout` JSON + cropped `regions` in reading order (PP-DocLayout-S / -M) | same |
 | `table-recognize` | `tableRecognize` | Table image → `html` (SLANet_plus + PP-OCRv6) | same |
-| `split-video` | `splitVideo` | Video → one `video_parts` file per shot (TransNetV2; remuxed where the cut is a key frame) | same + Mediabunny 1.66.2 |
+| `split-video` | `splitVideo` | Video → one `video_parts` file per shot (TransNetV2; remuxed where the cut is a key frame; frames and shots by ffmpeg.wasm for files the browser cannot read) | same + Mediabunny 1.66.2 |
 | `detect-objects` | `detectObjects` | Image → `objects` JSON (D-FINE nano, COCO) | transformers.js 4.3.2 |
 
 `parse-document` dispatches by MIME type, then file extension, then the leading bytes (so a
@@ -202,7 +207,10 @@ compute of bge-small.
 
 `models.json` (repo root, also exported as `tongflow-edge-essentials/models.json`) lists every model
 the plugin can download: `[{id, source: "modelscope:<org>/<repo>", files, approxMB, license,
-attribution?}]`. The weights-hosting job mirrors exactly those files under the model base. The audio
+attribution?}]`. The weights-hosting job mirrors exactly those files under the model base. One
+entry is not a model: `ffmpeg-wasm`, the ffmpeg.wasm core, with `source: "npm:@ffmpeg/core@0.12.10"`
+and files under `<modelBase>npm/@ffmpeg/core@0.12.10/` (see [Media nodes and ffmpeg.wasm](#media-nodes-and-ffmpegwasm));
+it also carries `licenseFiles` and `corresponding_source` (GPL). The audio
 entries also carry `checksums` (`{path: {size, sha256}}`, checked by the plugin before caching),
 `licenseUrl`, `slots` and `upstream` (the GitHub release asset each mirror was verified against).
 The T1 vision entries use the same format (`upstream` describes how each community conversion was
@@ -476,14 +484,16 @@ Speech and sound, on the CPU (onnxruntime-web wasm EP, no WebGPU needed). Every 
 its input **inside the worker** to 16 kHz mono Float32: Mediabunny demuxes any container (m4a/mp4,
 mp3, wav, webm, ogg, flac, video files too) and decodes with WebCodecs `AudioDecoder` (PCM without
 it); channels are averaged and a port of Kaldi's windowed-sinc `LinearResample` converts the rate
-(there is no AudioContext in a worker). Inputs over 100 MB are refused.
+(there is no AudioContext in a worker). Inputs over 100 MB are refused. Files the browser cannot
+demux or decode (WMA, AMR, RealAudio, the audio of AVI/WMV, …) are decoded by ffmpeg.wasm to 16 kHz
+mono instead, and `<model>+ffmpeg-wasm` forces that; see [Media nodes and ffmpeg.wasm](#media-nodes-and-ffmpegwasm).
 
 | Slot | Method | `models` | What it does |
 |---|---|---|---|
-| `transcribe` | `transcribe` | `sensevoice-small` | SenseVoiceSmall (int8): Chinese first (also en/ja/ko/yue), **with punctuation and ITN**. `language` is a hint (`zh`, `zh-CN`, `en`, `yue`/Cantonese/粤语, `ja`, `ko`; anything else = auto). Up to 30 s in one pass; longer audio is cut at pauses with Silero VAD into ≤ 25 s chunks, recognized one by one (progress `transcribing i/N`) and joined (no separator between CJK pieces). The ABI output has only `text`, so the detected language is not returned. `context` and `max_new_tokens` are ignored (CTC model). |
-| `vad-segment` | `vadSegment` | `silero-vad-v5` | `segments`: one 16 kHz mono 16-bit WAV per speech span (`x-expand-each`), named `<stem>-001-1.09s-5.68s.wav`. Silero's own `get_speech_timestamps` logic; defaults threshold 0.5, min speech 250 ms, min silence 500 ms, pad 200 ms, max 30 s (split at the last ≥ 98 ms pause). `_params` may override `threshold`, `min_speech_ms`, `min_silence_ms`, `speech_pad_ms`, `max_speech_s`. |
-| `diarize-speakers` | `diarizeSpeakers` | `pyannote-campplus-zh` | `segments` (JSON string): `[{"speaker":0,"start":0.976,"end":5.718}, …]`, seconds, sorted by start, speakers numbered by first appearance. pyannote segmentation-3.0 over 10 s windows (1 s step) → per-window local speakers → 3D-Speaker CAM++ (zh-cn) embedding of each → complete-linkage clustering on cosine distance (threshold 0.5) → pyannote reconstruction; segments < 0.3 s dropped, same-speaker gaps ≤ 0.5 s merged. A port of sherpa-onnx's `OfflineSpeakerDiarizationPyannoteImpl`. `_params`: `num_speakers` (exact count), `threshold`. |
-| `audio-tag` | `audioTag` | `ced-tiny` | `tags` (JSON string): `[{"label":"Speech","score":0.7072}, …]`, AudioSet's 527 classes, the top 10 with score ≥ 0.1 (at least one). Long audio is tagged in 10 s windows (CED's training length) and each class keeps its maximum. `_params`: `top_k`, `min_score`. |
+| `transcribe` | `transcribe` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm` | SenseVoiceSmall (int8): Chinese first (also en/ja/ko/yue), **with punctuation and ITN**. `language` is a hint (`zh`, `zh-CN`, `en`, `yue`/Cantonese/粤语, `ja`, `ko`; anything else = auto). Up to 30 s in one pass; longer audio is cut at pauses with Silero VAD into ≤ 25 s chunks, recognized one by one (progress `transcribing i/N`) and joined (no separator between CJK pieces). The ABI output has only `text`, so the detected language is not returned. `context` and `max_new_tokens` are ignored (CTC model). |
+| `vad-segment` | `vadSegment` | `silero-vad-v5`, `silero-vad-v5+ffmpeg-wasm` | `segments`: one 16 kHz mono 16-bit WAV per speech span (`x-expand-each`), named `<stem>-001-1.09s-5.68s.wav`. Silero's own `get_speech_timestamps` logic; defaults threshold 0.5, min speech 250 ms, min silence 500 ms, pad 200 ms, max 30 s (split at the last ≥ 98 ms pause). `_params` may override `threshold`, `min_speech_ms`, `min_silence_ms`, `speech_pad_ms`, `max_speech_s`. |
+| `diarize-speakers` | `diarizeSpeakers` | `pyannote-campplus-zh`, `pyannote-campplus-zh+ffmpeg-wasm` | `segments` (JSON string): `[{"speaker":0,"start":0.976,"end":5.718}, …]`, seconds, sorted by start, speakers numbered by first appearance. pyannote segmentation-3.0 over 10 s windows (1 s step) → per-window local speakers → 3D-Speaker CAM++ (zh-cn) embedding of each → complete-linkage clustering on cosine distance (threshold 0.5) → pyannote reconstruction; segments < 0.3 s dropped, same-speaker gaps ≤ 0.5 s merged. A port of sherpa-onnx's `OfflineSpeakerDiarizationPyannoteImpl`. `_params`: `num_speakers` (exact count), `threshold`. |
+| `audio-tag` | `audioTag` | `ced-tiny`, `ced-tiny+ffmpeg-wasm` | `tags` (JSON string): `[{"label":"Speech","score":0.7072}, …]`, AudioSet's 527 classes, the top 10 with score ≥ 0.1 (at least one). Long audio is tagged in 10 s windows (CED's training length) and each class keeps its maximum. `_params`: `top_k`, `min_score`. |
 
 **Runtime choice: onnxruntime-web, not sherpa-onnx WASM.** The plan was sherpa-onnx's WASM build
 with runtime-fetched models. It is not practical: the browser builds published with sherpa-onnx
@@ -546,6 +556,106 @@ assets in this repo; it is a model-base file, so the weight host must serve file
   (iic/speech_campplus_sv_zh-cn_16k-common, Alibaba Tongyi Lab, Apache-2.0); Silero VAD by Silero Team
   (MIT); ONNX exports by k2-fsa/sherpa-onnx (Apache-2.0).
 
+### Media nodes and ffmpeg.wasm
+
+The media slots (`extract-audio`, `get-first-frame`, `get-last-frame`, `concat-videos`,
+`remove-video-audio`, `merge-video-audio`), the frame sampling and shot writing of `split-video`,
+and the audio decoding in front of `transcribe`, `vad-segment`, `diarize-speakers` and `audio-tag`
+have two implementations behind the **same ABI slot**:
+
+1. **Default: Mediabunny + WebCodecs.** Demuxing, muxing and stream copy in JavaScript, decoding
+   with the browser's WebCodecs. Small (Mediabunny ≈ 196 kB gzip) and fast, but limited to the
+   containers Mediabunny reads (MP4/MOV, WebM/MKV, Ogg, WAV, MP3, ADTS, FLAC, MPEG-TS) and the
+   codecs the browser decodes.
+2. **ffmpeg.wasm** (`@ffmpeg/core` 0.12.10, FFmpeg n5.1.4, single-threaded). Reads what FFmpeg
+   reads: AVI (MPEG-4 Part 2, MS-MPEG4), WMV/WMA (ASF), MPEG-2 video, RealMedia, AMR, and so on.
+
+**Fallback (automatic).** The default path runs first. When it reports that it cannot handle the
+file, the slot runs again on ffmpeg.wasm and says so in the progress message, e.g.
+`the browser cannot read this file (Input has an unsupported or unrecognizable format.): falling back to ffmpeg.wasm for extracting audio`.
+The triggers (`MediaUnsupportedError`, `src/ffmpeg/select.ts`):
+
+- Mediabunny cannot demux the container (unknown format, damaged file);
+- the track's codec is unknown to Mediabunny, or WebCodecs `isConfigSupported` rejects it
+  (`track.canDecode()` is false), or the browser has no WebCodecs / OffscreenCanvas at all;
+- a Mediabunny `Conversion` is invalid (a track has no decoder or encoder), or a decoder or muxer
+  throws during the work (any error that is not one of the plugin's own answers);
+- `concat-videos`: the clips differ in codec, size or codec setup, so a stream copy is impossible
+  and ffmpeg re-encodes; `merge-video-audio`: the audio is not AAC and the browser cannot encode AAC;
+- "no video/audio track" in an MPEG-TS or Ogg file: those demuxers drop the streams they do not
+  know (MPEG-TS drops MPEG-2 video) instead of listing them, so ffmpeg is asked.
+
+Answers are not retried: "this file has no audio track" in an MP4/WebM, "the video is too short to
+split", missing inputs. A cancelled node is never retried. When both fail, the error names both
+reasons (`…; the ffmpeg.wasm fallback failed too: …`).
+
+**Selection ("换实现").** The slot entry's `models` list exposes the implementation, default first:
+
+| Slot | `models` |
+|---|---|
+| `extract-audio`, `get-first-frame`, `get-last-frame`, `concat-videos`, `remove-video-audio`, `merge-video-audio` | `["mediabunny", "ffmpeg-wasm"]` |
+| `transcribe` / `vad-segment` / `diarize-speakers` / `audio-tag` | `["<model>", "<model>+ffmpeg-wasm"]`, e.g. `sensevoice-small+ffmpeg-wasm`: the same model, its input decoded by ffmpeg |
+| `split-video` | `["transnetv2", "transnetv2+ffmpeg-wasm"]`: TransNetV2 still finds the cuts; ffmpeg samples the frames and writes the shots |
+
+`ffmpeg-wasm` (or the `+ffmpeg-wasm` suffix) as `ctx.model` skips the browser path. The default
+(`mediabunny`, or the bare model id) falls back by itself, so choosing ffmpeg is only needed to
+force it. The scanner allows one entry per `nodeSlot`, so these are `models`, not extra methods.
+
+**Same semantics as the Modal plugin.** `tongflow-modal-ffmpeg` serves the same slots in Python;
+both produce the same ABI shapes, so either can replace the other in a graph:
+
+| Slot | Here | `tongflow-modal-ffmpeg` |
+|---|---|---|
+| `extract-audio` | stream copy into a matching container (`.m4a`/`.mp3`/`.webm`/`.flac`/`.wav`); otherwise AAC `.m4a` (WebCodecs) or MP3 (ffmpeg, `libmp3lame`) | always MP3 (`libmp3lame`) |
+| `get-first-frame` / `get-last-frame` | first / last decoded frame, PNG | frame at t = 0 / duration − ½ frame, PNG |
+| `remove-video-audio` | video copied into MP4 (`-an -c:v copy`); H.264 when the codec cannot go into MP4 | `-an -vcodec copy` → `.mp4` |
+| `merge-video-audio` | `-map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -shortest` → MP4 (the browser path copies AAC as is and encodes anything else to AAC) | same command |
+| `concat-videos` | stream copy when all clips match, else H.264 CRF 23 + AAC, every clip scaled into the largest frame (centred), highest frame rate, silence for clips without audio | concat demuxer `-c copy`, else moviepy `compose` → H.264 CRF 23 + AAC |
+
+Output names: `<stem>.<ext>` (audio), `<stem>-first.png` / `<stem>-last.png`, `<stem>-noaudio.mp4`,
+`<stem>-merged.mp4`, `<first stem>-concat.mp4`, `<stem>-shotN.mp4`. The Modal plugin names its files
+by UUID; nothing downstream depends on the name.
+
+**The core is hosted like a model, not bundled.** `dist/` holds only the 0.6 kB worker shim
+(`dist/ffmpeg-worker.js`) and the glue chunks; the core is fetched on first use from the model base:
+
+```
+<modelBase>npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js     111,804 bytes
+<modelBase>npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm    32,232,419 bytes (≈ 9.6 MB gzip)
+```
+
+The path mirrors the npm package (`npm/<package>@<version>/<path>`, the way `<org>/<repo>/<path>`
+mirrors a ModelScope repo), so a host can unpack the npm tarball as is. Both files are listed in
+`models.json` (`id: "ffmpeg-wasm"`, `source: "npm:@ffmpeg/core@0.12.10"`) with size and SHA-256;
+the plugin verifies them before caching them in the Cache API (`tongflow-edge-models-v1`) and
+reports the download through `modelDownload` (`file: "npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm"`,
+`model: "ffmpeg-wasm"`). Serve the core with gzip or brotli transfer compression.
+
+**Worker.** `@ffmpeg/ffmpeg`'s class is not used: its worker has an unpkg.com fallback URL built in
+and is located with `new URL("./worker.js", import.meta.url)`, which does not survive bundling into
+a chunk. Instead the plugin worker starts its own nested module worker (`dist/ffmpeg-worker.js`;
+nested dedicated workers work in Chromium, Firefox and Safari ≥ 15.5) and hands it the verified core
+bytes; that worker imports the core from a blob URL with `wasmBinary` set, so the core fetches
+nothing itself. Jobs run one at a time in MEMFS (`/w/`), and each job's files are deleted afterwards.
+ffmpeg's `exec` is synchronous and cannot be interrupted, so **cancelling a node terminates the
+ffmpeg worker**; the next job starts a fresh one from the cached core (≈ 0.4–0.7 s). Where a nested
+worker cannot be started, the core runs in the plugin worker itself. The core's `ffprobe` entry
+point is not used: it keeps option state between calls and corrupts the next `exec`; stream
+information comes from ffmpeg's own input dump (`ffmpeg -i`).
+
+**Single-threaded only.** `@ffmpeg/core-mt` needs `SharedArrayBuffer`, so cross-origin isolation,
+plus an extra worker file; the hosts do not serve the editor cross-origin isolated, and most
+fallback jobs (stream copy, single frames, audio decoding) are I/O-bound. Not done: it would be a
+second `models.json` entry, used only when `crossOriginIsolated` is true.
+
+**Measured** (Chromium headless, Apple Silicon, core from a local model base): first ffmpeg use
+0.4–0.7 s (cache read + compile); AVI/WMV/MPEG-TS first or last frame 15–45 ms, audio extraction
+25–45 ms, `transcribe` of the 1.5 s WMA 6.5 s (the SenseVoice load dominates); last frame of a 50 s
+720p H.264 file 2.9 s (Mediabunny: 0.3 s), a stream-copy remux of it 26 ms. Re-encoding is the slow
+part: single-threaded wasm x264 needed 197 s for a 56 s 720p concat with preset `fast` (≈ 7 fps),
+so the plugin uses `veryfast` (CRF 23 either way): 66 s (≈ 21 fps). `split-video` of that 50 s
+720p file: 65 s on Mediabunny, 87 s with `transnetv2+ffmpeg-wasm` (TransNetV2 inference is the same).
+
 ### Bundle
 
 Every library is a lazy dynamic import, so the entry is 12 kB and each format loads only what it
@@ -563,7 +673,8 @@ needs. Gzip transfer on first use, chunks included:
 | .html | defuddle, linkedom, xmldom ≈ 426 kB |
 | .epub | zip.js + the HTML path ≈ 514 kB |
 | legacy formats | xberg glue 91 kB + wasm ≈ 17.3 MB (41 MB raw) |
-| extract-audio / get-first-frame | Mediabunny ≈ 192 kB |
+| any media node (extract-audio, first/last frame, concat, remove/merge audio) | media glue 5.6 kB + Mediabunny ≈ 196 kB |
+| the ffmpeg.wasm fallback (any media or audio node) | ffmpeg glue ≈ 5 kB + worker shim 0.4 kB, then the core from the model base: 111 kB JS + 32.2 MB wasm (≈ 9.6 MB gzip), cached |
 | detect-language | eld medium ≈ 558 kB |
 | chunk-text / kb-write | 1.8 kB / 0.9 kB |
 | embed-text (and `embedQuery`) | transformers.js 123 kB + onnxruntime-web 42 kB + glue 3 kB, ort wasm 7.1 MB (28.7 MB raw), + the model (24 MB, or 103 MB for bge-base) |
@@ -589,7 +700,15 @@ npm run test:browser   # build, then vitest browser mode (Playwright Chromium):
                        # dist/index.js as a module worker over protocol v1, plus
                        # createWorkerEdgeExecutor + runWorkflow
 npm run fixtures       # regenerate test/fixtures (needs LibreOffice, ffmpeg, Playwright)
+npm run fixtures:media # test/fixtures/media (AVI, WMV, WMA, MPEG-TS, MP4s; needs ffmpeg)
 ```
+
+The ffmpeg.wasm tests (`test/browser/ffmpeg.test.ts`) need the core in `EDGE_MODELS_DIR` under
+`npm/@ffmpeg/core@0.12.10/dist/esm/` (copy `node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.{js,wasm}`;
+`@ffmpeg/core` is a pinned devDependency for exactly this and for the checksum test); without it they
+skip and only the Mediabunny stream-copy tests run. The AMR-NB test runs only when
+`test/fixtures/media/hello-zh.amr` exists: Homebrew's ffmpeg has no AMR-NB encoder
+(`libopencore_amrnb`), so the committed fixtures have none.
 
 Node covers pdf.js (legacy build), docx, xlsx/xls/ods, csv, pptx, eml, msg, html, md/txt, epub,
 the xberg legacy formats, `extract-audio` (remux needs no WebCodecs) and `detect-language`.
@@ -659,7 +778,8 @@ bundled; the ABI types are type-only.
 ### Licenses
 
 This plugin is AGPL-3.0, like TongFlow and its official plugins. No bundled library is AGPL,
-and none is GPL-only.
+and none is GPL-only. The ffmpeg.wasm core is GPL-2.0-or-later and is **downloaded, not bundled**
+(below).
 
 | Library | Version | License | Note |
 |---|---|---|---|
@@ -685,6 +805,7 @@ and none is GPL-only.
 | @huggingface/transformers (transformers.js) | 4.3.2 | Apache-2.0 | T3 only; bundles @huggingface/jinja and @huggingface/tokenizers (Apache-2.0) |
 | @huggingface/transformers-structured-output | 4.3.2 | Apache-2.0 | `gen-text` only |
 | onnxruntime-web | 1.31.1 | MIT | Bundled JS + `dist/assets/ort/` wasm; notice in `licenses/onnxruntime-web-MIT.txt` |
+| **@ffmpeg/core** (ffmpeg.wasm) | 0.12.10 (FFmpeg n5.1.4) | **GPL-2.0-or-later** | ⚠️ Not in `dist/`: fetched from the model base on first use, unmodified. Full text in `licenses/GPL-2.0.txt`, corresponding source in `licenses/ffmpeg-wasm-NOTICE.txt` and `models.json` |
 
 Model weights are not part of this package; they are downloaded from the host's model base. Their
 licenses are in the [T3 models table](#t3-webgpu-nodes) and the [T2 audio section](#t2-audio-nodes);
@@ -695,14 +816,26 @@ Gemma Prohibited Use Policy)", "LFM2.5-350M by Liquid AI, Inc. (LFM Open License
 Tomáš Souček (MIT)", "D-FINE by Peterande et al. (Apache-2.0)"; the T1 entries are in the
 [T1 models table](#t1-visiondocument-nodes).
 
-Avoided on purpose: MuPDF.js and scribe.js (AGPL-3.0), the ffmpeg.wasm core (GPL-2.0+) and the
-Ultralytics models (AGPL-3.0).
+**ffmpeg.wasm.** It was left out at first to keep the plugin free of GPL code. It is now used
+because the browser alone cannot read AVI, WMV/WMA, RealMedia, AMR or MPEG-2, which users do
+upload, and the project is open source under AGPL-3.0: GPL-2.0-or-later code may be combined with
+it (taken under GPL-3.0, AGPL-3.0 §13), so a GPL build with x264/x265 is acceptable. Obligations
+kept: the core is the unmodified official `@ffmpeg/core` 0.12.10 build; the GPL-2.0 text ships in
+`licenses/GPL-2.0.txt`; `licenses/ffmpeg-wasm-NOTICE.txt` and the `models.json` entry name the
+corresponding source (ffmpegwasm/ffmpeg.wasm commit `71aa99d37c02a7b4c435275ca9ef50e612f6efa1`,
+tag `v12.15`, which pins FFmpeg n5.1.4 and every library); a host that mirrors the core should
+serve that NOTICE and the license next to it. It runs in its own worker and is never part of the
+plugin bundle.
+
+Still avoided on purpose: MuPDF.js and scribe.js (AGPL-3.0) and the Ultralytics models (AGPL-3.0).
 
 Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (Apache-2.0). The audio
 fixtures in `test/fixtures/audio/` were synthesized for this repo with macOS `say` (voices Tingting and Reed). The
 vision fixtures `cat.jpg` and `astronaut.jpg` are scikit-image sample photos (chelsea: CC0, Stefan van
 der Walt; astronaut: NASA, public domain); `paper.pdf`, `shots.mp4` and `shots-gop.webm` are generated
-by `scripts/gen-vision-fixtures.mjs` (Chromium print, ffmpeg test sources). `product-intro.mp4`,
+by `scripts/gen-vision-fixtures.mjs` (Chromium print, ffmpeg test sources). `test/fixtures/media/`
+is generated by `scripts/gen-media-fixtures.mjs` from ffmpeg colour sources and the `hello-zh.wav`
+speech. `product-intro.mp4`,
 `whiteboard.jpg` and `slide-frame.jpg` come from the scanall demo samples (`demo/samples/`, made by
 scanall's own demo tooling, all content self-authored and fictional; font Source Han Sans SC, OFL):
 `product-intro.mp4` is `产品介绍短片.mp4` with the video stream copied and the audio (macOS `say`
@@ -715,7 +848,7 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 ## 中文
 
 [TongFlow](https://github.com/tong-io/tongflow) 官方**浏览器端边缘插件**。它在用户浏览器的 Web Worker 里,通过 TongFlow
-浏览器引擎完成以下工作:解析文档、把 PDF 渲染成页面图、从视频中抽取音轨和首帧、识别文本语种,以及为端侧知识库切块和计算向量。
+浏览器引擎完成以下工作:解析文档、把 PDF 渲染成页面图、从视频中抽取音轨和首帧/尾帧、拼接视频、去掉或替换视频的音轨(浏览器读不了的格式交给 ffmpeg.wasm)、识别文本语种,以及为端侧知识库切块和计算向量。
 文件不出设备。文档、音视频、语种节点是 **T0(零模型)** 节点;`embed-text` 首次使用时从宿主的 model base 下载 24 MB 模型。另有可选的 **T3(WebGPU)** 节点:图像理解、GLM-OCR、图像向量、要点抽取,模型 250–850 MB,见下文「T3 WebGPU 节点」。
 
 ### 实现的 slot
@@ -724,8 +857,12 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 |---|---|---|---|
 | `parse-document` | `parseDocument` | 各类文档转成 Markdown 风格的 `text`;`images` 暂时恒为 `[]` | 见下表 |
 | `render-pages` | `renderPages` | PDF 每页输出一张 PNG(`pages`,`x-expand-each`)。分辨率 150 DPI,最长边不超过 4096 px。仅限浏览器(需要 OffscreenCanvas) | pdf.js 6.5.438 |
-| `extract-audio` | `extractAudio` | 抽取视频的主音轨,能不重编码就直接转封装:AAC/AC-3 转 `.m4a`,Opus/Vorbis 转纯音频 `.webm`,MP3 转 `.mp3`,FLAC 转 `.flac`,PCM 转 `.wav`。其它编码用 WebCodecs 转成 AAC | Mediabunny 1.66.2 |
-| `get-first-frame` | `getFirstFrame` | 视频第一帧可解码画面,输出 PNG(已按旋转信息校正)。仅限浏览器(WebCodecs),能解哪些编码取决于浏览器 | Mediabunny 1.66.2 |
+| `extract-audio` | `extractAudio` | 抽取视频的主音轨,能不重编码就直接转封装:AAC/AC-3 转 `.m4a`,Opus/Vorbis 转纯音频 `.webm`,MP3 转 `.mp3`,FLAC 转 `.flac`,PCM 转 `.wav`。其它编码用 WebCodecs 转成 AAC(走 ffmpeg.wasm 时转成 MP3) | Mediabunny 1.66.2;ffmpeg.wasm 兜底,见「音视频节点与 ffmpeg.wasm」 |
+| `get-first-frame` | `getFirstFrame` | 视频第一帧可解码画面,输出 PNG(已按旋转信息校正)。用 WebCodecs 解码;浏览器解不了的编码交给 ffmpeg.wasm | 同上 |
+| `get-last-frame` | `getLastFrame` | 视频最后一帧(按显示顺序),输出 PNG,文件名 `<原名>-last.png` | 同上 |
+| `concat-videos` | `concatVideos` | 把 `videos` 首尾相接成一个 MP4。各段编码、尺寸、编码参数都一致时直接复制码流;否则由 ffmpeg.wasm 重编码为 H.264/AAC,尺寸取最大的一段,小的居中 | 同上 |
+| `remove-video-audio` | `removeVideoAudio` | 去掉音轨,视频码流直接复制进 MP4(`-an -vcodec copy`);编码放不进 MP4 时才转 H.264 | 同上 |
+| `merge-video-audio` | `mergeVideoAudio` | 复制 `video` 的视频码流,`audio` 的音频转为 AAC,合成 MP4,时长取较短的一方(`-shortest`) | 同上 |
 | `detect-language` | `detectLanguage` | 输出文本的 ISO 639-1 语种代码,支持 60 种语言。不会因内容失败:eld 判不出的短句(「谢谢，辛苦了。」)按文字系统判定(汉字占字母一半以上为 `zh`,有假名为 `ja`,谚文为 `ko`);空文本或没有字母的文本返回 `und` | eld 2.1.1(medium 词典) |
 | `chunk-text` | `chunkText` | 文本切成知识库片段(见下方「知识库节点」) | 自写 |
 | `embed-text` | `embedText` | 文本转 TFV1 向量,默认 bge-small-zh-v1.5,可换 bge-base-zh-v1.5 | transformers.js 4.3.2、onnxruntime-web 1.31.1 |
@@ -738,7 +875,7 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 | `image-orient` | `imageOrient` | 图片转正,输出 PNG(PP-LCNet doc_ori) | 同上 |
 | `layout-detect` | `layoutDetect` | 页面图输出 `layout` JSON 和按阅读顺序裁好的 `regions`(PP-DocLayout-S/-M) | 同上 |
 | `table-recognize` | `tableRecognize` | 表格图转 `html`(SLANet_plus + PP-OCRv6) | 同上 |
-| `split-video` | `splitVideo` | 视频按镜头切成多个 `video_parts`(TransNetV2;切点在关键帧上时直接转封装) | 同上,加 Mediabunny 1.66.2 |
+| `split-video` | `splitVideo` | 视频按镜头切成多个 `video_parts`(TransNetV2;切点在关键帧上时直接转封装;浏览器读不了的文件由 ffmpeg.wasm 采帧和写片段) | 同上,加 Mediabunny 1.66.2 |
 | `detect-objects` | `detectObjects` | 图片输出 `objects` JSON(D-FINE nano,COCO 类别) | transformers.js 4.3.2 |
 
 `parse-document` 按以下顺序判断格式:先看 MIME,再看扩展名,最后看文件头字节。没有文件名的上传也能识别。
@@ -839,7 +976,9 @@ transformers.js **4.3.2** + onnxruntime-web **1.31.1**(所有 ML 节点共用这
 ### 模型清单
 
 `models.json`(仓库根目录,也以 `tongflow-edge-essentials/models.json` 导出)列出插件可能下载的全部模型:
-`[{id, source: "modelscope:<org>/<repo>", files, approxMB, license, attribution?}]`,权重托管任务按它同步。
+`[{id, source: "modelscope:<org>/<repo>", files, approxMB, license, attribution?}]`,权重托管任务按它同步。其中 `ffmpeg-wasm` 不是模型,
+而是 ffmpeg.wasm core:`source: "npm:@ffmpeg/core@0.12.10"`,文件放在 `<modelBase>npm/@ffmpeg/core@0.12.10/` 下,另带 `licenseFiles` 和
+`corresponding_source`(GPL 要求)。
 
 - `bge-small-zh-v1.5`(`embed-text` 默认):`modelscope:Xenova/bge-small-zh-v1.5`,24 MB,MIT;
 - `bge-base-zh-v1.5`:`modelscope:Xenova/bge-base-zh-v1.5`,103 MB(98.1 MiB,未超过单文件 100 MiB 上限),MIT。
@@ -974,14 +1113,15 @@ LFM2.5-350M q4f16 对约 200 字的中文合同条款做 `gen-text`,首次 6–1
 语音与声音节点,跑在 CPU 上(onnxruntime-web 的 wasm EP,不需要 WebGPU)。每个 slot 先**在 worker 内**把输入解码成
 16 kHz 单声道 Float32:Mediabunny 解封装各种容器(m4a/mp4、mp3、wav、webm、ogg、flac,视频文件也可以),用 WebCodecs
 `AudioDecoder` 解码(PCM 不需要它);多声道取平均,采样率用移植的 Kaldi 加窗 sinc `LinearResample` 转换(worker 里没有
-AudioContext)。超过 100 MB 的输入会被拒绝。
+AudioContext)。超过 100 MB 的输入会被拒绝。浏览器解不开或解不了的文件(WMA、AMR、RealAudio、AVI/WMV 里的音轨等)改由 ffmpeg.wasm
+解码成 16 kHz 单声道;选 `<模型>+ffmpeg-wasm` 可强制这样做,见「音视频节点与 ffmpeg.wasm」。
 
 | Slot | 方法 | `models` | 作用 |
 |---|---|---|---|
-| `transcribe` | `transcribe` | `sensevoice-small` | SenseVoiceSmall(int8):中文优先(也支持英/日/韩/粤),**带标点和 ITN**。`language` 是提示(`zh`、`zh-CN`、`en`、`yue`/粤语、`ja`、`ko`,其它按自动)。30 s 以内一次识别;更长的音频先用 Silero VAD 在停顿处切成不超过 25 s 的段,逐段识别(进度 `transcribing i/N`)再拼接(中文段之间不加分隔)。ABI 输出只有 `text`,识别出的语种不返回。`context`、`max_new_tokens` 不生效(CTC 模型) |
-| `vad-segment` | `vadSegment` | `silero-vad-v5` | `segments`:每个语音段一个 16 kHz 单声道 16 位 WAV(`x-expand-each`),文件名形如 `<stem>-001-1.09s-5.68s.wav`。算法即 Silero 官方的 `get_speech_timestamps`;默认阈值 0.5、最短语音 250 ms、最短静音 500 ms、前后各补 200 ms、单段最长 30 s(在最后一个 ≥ 98 ms 的停顿处切开)。`_params` 可覆盖 `threshold`、`min_speech_ms`、`min_silence_ms`、`speech_pad_ms`、`max_speech_s` |
-| `diarize-speakers` | `diarizeSpeakers` | `pyannote-campplus-zh` | `segments`(JSON 字符串):`[{"speaker":0,"start":0.976,"end":5.718}, …]`,单位秒,按开始时间排序,说话人按首次出现编号。pyannote segmentation-3.0 以 10 s 窗口、1 s 步长做局部分割 → 每个窗口内的局部说话人各取一个 3D-Speaker CAM++(中文)声纹 → 按余弦距离做全连接层次聚类(阈值 0.5)→ pyannote 的重建;短于 0.3 s 的段丢弃,同一说话人间隔 ≤ 0.5 s 的段合并。移植自 sherpa-onnx 的 `OfflineSpeakerDiarizationPyannoteImpl`。`_params`:`num_speakers`(指定人数)、`threshold` |
-| `audio-tag` | `audioTag` | `ced-tiny` | `tags`(JSON 字符串):`[{"label":"Speech","score":0.7072}, …]`,AudioSet 527 类,取分数 ≥ 0.1 的前 10 个(至少一个)。长音频按 10 s 窗口(CED 的训练长度)分别打标,每类取最大值。`_params`:`top_k`、`min_score` |
+| `transcribe` | `transcribe` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm` | SenseVoiceSmall(int8):中文优先(也支持英/日/韩/粤),**带标点和 ITN**。`language` 是提示(`zh`、`zh-CN`、`en`、`yue`/粤语、`ja`、`ko`,其它按自动)。30 s 以内一次识别;更长的音频先用 Silero VAD 在停顿处切成不超过 25 s 的段,逐段识别(进度 `transcribing i/N`)再拼接(中文段之间不加分隔)。ABI 输出只有 `text`,识别出的语种不返回。`context`、`max_new_tokens` 不生效(CTC 模型) |
+| `vad-segment` | `vadSegment` | `silero-vad-v5`, `silero-vad-v5+ffmpeg-wasm` | `segments`:每个语音段一个 16 kHz 单声道 16 位 WAV(`x-expand-each`),文件名形如 `<stem>-001-1.09s-5.68s.wav`。算法即 Silero 官方的 `get_speech_timestamps`;默认阈值 0.5、最短语音 250 ms、最短静音 500 ms、前后各补 200 ms、单段最长 30 s(在最后一个 ≥ 98 ms 的停顿处切开)。`_params` 可覆盖 `threshold`、`min_speech_ms`、`min_silence_ms`、`speech_pad_ms`、`max_speech_s` |
+| `diarize-speakers` | `diarizeSpeakers` | `pyannote-campplus-zh`, `pyannote-campplus-zh+ffmpeg-wasm` | `segments`(JSON 字符串):`[{"speaker":0,"start":0.976,"end":5.718}, …]`,单位秒,按开始时间排序,说话人按首次出现编号。pyannote segmentation-3.0 以 10 s 窗口、1 s 步长做局部分割 → 每个窗口内的局部说话人各取一个 3D-Speaker CAM++(中文)声纹 → 按余弦距离做全连接层次聚类(阈值 0.5)→ pyannote 的重建;短于 0.3 s 的段丢弃,同一说话人间隔 ≤ 0.5 s 的段合并。移植自 sherpa-onnx 的 `OfflineSpeakerDiarizationPyannoteImpl`。`_params`:`num_speakers`(指定人数)、`threshold` |
+| `audio-tag` | `audioTag` | `ced-tiny`, `ced-tiny+ffmpeg-wasm` | `tags`(JSON 字符串):`[{"label":"Speech","score":0.7072}, …]`,AudioSet 527 类,取分数 ≥ 0.1 的前 10 个(至少一个)。长音频按 10 s 窗口(CED 的训练长度)分别打标,每类取最大值。`_params`:`top_k`、`min_score` |
 
 **运行时选型:用 onnxruntime-web,不用 sherpa-onnx WASM。** 原计划用 sherpa-onnx 的 WASM 构建并在运行时拉模型,但不可行:
 sherpa-onnx 2.0.2 发布的浏览器构建都用 `--preload-file` 把模型打进包里,而且只有 VAD/TTS/降噪;npm 上 `sherpa-onnx` 的 wasm
@@ -1023,6 +1163,69 @@ snakers4 的 v5.1.2)、CED 字节一致;CAM++ 是较早的导出,GitHub 上的�
 - pyannote/segmentation-3.0(Hervé Bredin 及 pyannote.audio 贡献者,MIT);3D-Speaker CAM++(iic/speech_campplus_sv_zh-cn_16k-common,
   阿里通义实验室,Apache-2.0);Silero VAD(Silero Team,MIT);ONNX 导出来自 k2-fsa/sherpa-onnx(Apache-2.0)。
 
+### 音视频节点与 ffmpeg.wasm
+
+音视频 slot(`extract-audio`、`get-first-frame`、`get-last-frame`、`concat-videos`、`remove-video-audio`、`merge-video-audio`)、
+`split-video` 的采帧和写片段,以及 `transcribe`、`vad-segment`、`diarize-speakers`、`audio-tag` 前面的音频解码,都在**同一个 ABI slot**
+下有两种实现:
+
+1. **默认:Mediabunny + WebCodecs。** 解封装、封装、复制码流用 JavaScript 完成,解码用浏览器的 WebCodecs。体积小(Mediabunny gzip 约
+   196 kB)、速度快,但只认 Mediabunny 能读的容器(MP4/MOV、WebM/MKV、Ogg、WAV、MP3、ADTS、FLAC、MPEG-TS)和浏览器能解的编码。
+2. **ffmpeg.wasm**(`@ffmpeg/core` 0.12.10,FFmpeg n5.1.4,单线程)。FFmpeg 能读的都能读:AVI(MPEG-4 Part 2、MS-MPEG4)、
+   WMV/WMA(ASF)、MPEG-2 视频、RealMedia、AMR 等。
+
+**自动兜底。** 先走默认实现;默认实现报告处理不了时,该 slot 改用 ffmpeg.wasm 重做一遍,并在进度消息里说明,例如
+`the browser cannot read this file (…): falling back to ffmpeg.wasm for extracting audio`。触发条件(`MediaUnsupportedError`,
+`src/ffmpeg/select.ts`):
+
+- Mediabunny 解不开容器(未知格式、文件损坏);
+- Mediabunny 不认识该轨道的编码,或 WebCodecs `isConfigSupported` 不支持(`track.canDecode()` 为 false),或浏览器根本没有
+  WebCodecs / OffscreenCanvas;
+- Mediabunny `Conversion` 无效(某条轨道没有可用的解码器或编码器),或处理中解码器、封装器抛错(凡不是插件自己给出的结论都算);
+- `concat-videos`:各段编码、尺寸或编码参数不一致,无法直接复制码流,由 ffmpeg 重编码;`merge-video-audio`:音频不是 AAC 且浏览器无法编码 AAC;
+- MPEG-TS 或 Ogg 文件里「没有视频/音频轨」:这两种解封装器会直接丢掉不认识的流(MPEG-TS 会丢 MPEG-2 视频),而不是列出来,所以交给 ffmpeg 判断。
+
+确定的结论不重试:MP4/WebM 里「这个文件没有音轨」、「视频太短无法切分」、缺少输入。取消的节点不重试。两种实现都失败时,错误信息同时给出两个原因
+(`…; the ffmpeg.wasm fallback failed too: …`)。
+
+**换实现。** 实现通过 slot 条目的 `models` 列表暴露,默认在前:
+
+| Slot | `models` |
+|---|---|
+| `extract-audio`、`get-first-frame`、`get-last-frame`、`concat-videos`、`remove-video-audio`、`merge-video-audio` | `["mediabunny", "ffmpeg-wasm"]` |
+| `transcribe` / `vad-segment` / `diarize-speakers` / `audio-tag` | `["<模型>", "<模型>+ffmpeg-wasm"]`,如 `sensevoice-small+ffmpeg-wasm`:同一个模型,输入由 ffmpeg 解码 |
+| `split-video` | `["transnetv2", "transnetv2+ffmpeg-wasm"]`:切点仍由 TransNetV2 找,ffmpeg 负责采帧和写片段 |
+
+`ctx.model` 为 `ffmpeg-wasm`(或带 `+ffmpeg-wasm` 后缀)时跳过浏览器实现。默认实现会自己兜底,只有想强制使用 ffmpeg 时才需要选它。
+scanner 每个 `nodeSlot` 只允许一条,所以这里用 `models` 表达,而不是另写方法。
+
+**与 Modal 插件语义一致。** `tongflow-modal-ffmpeg` 用 Python 实现了同样的 slot,两者输出同样的 ABI 结构,在工作流里可以互相替换:
+`extract-audio` 能复制就复制进对应容器,否则转 AAC `.m4a`(WebCodecs)或 MP3(ffmpeg,`libmp3lame`;Modal 一律 MP3);首帧/尾帧输出 PNG;
+`remove-video-audio` 把视频码流复制进 MP4;`merge-video-audio` 同 Modal 的 `-c:v copy -c:a aac -shortest`;`concat-videos` 各段一致时复制码流,
+否则 H.264 CRF 23 + AAC,每段缩放进最大画幅并居中(对应 moviepy 的 `compose`)。输出文件名:`<原名>.<扩展名>`、`<原名>-first.png` /
+`<原名>-last.png`、`<原名>-noaudio.mp4`、`<原名>-merged.mp4`、`<第一段原名>-concat.mp4`、`<原名>-shotN.mp4`(Modal 用 UUID 命名,下游不依赖文件名)。
+
+**core 按模型方式托管,不打进 dist。** `dist/` 里只有 0.6 kB 的 worker 外壳(`dist/ffmpeg-worker.js`)和胶水 chunk;core 首次使用时从
+model base 下载:`<modelBase>npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js`(111,804 字节)和 `…/ffmpeg-core.wasm`(32,232,419 字节,
+gzip 约 9.6 MB)。路径与 npm 包结构一致(`npm/<包名>@<版本>/<路径>`,就像 `<org>/<repo>/<path>` 对应 ModelScope 仓库),托管方把 npm
+tarball 原样解开即可。两个文件都登记在 `models.json`(`id: "ffmpeg-wasm"`,`source: "npm:@ffmpeg/core@0.12.10"`),带大小和 SHA-256;插件校验后
+存入 Cache API(`tongflow-edge-models-v1`),下载进度经 `modelDownload` 上报。托管时请对 core 启用 gzip 或 brotli 传输压缩。
+
+**Worker。** 没有用 `@ffmpeg/ffmpeg` 的类:它的 worker 内置了 unpkg.com 的兜底地址,而且用 `new URL("./worker.js", import.meta.url)`
+定位 worker,打包进 chunk 后会失效。插件 worker 自己再起一个嵌套的 module worker(`dist/ffmpeg-worker.js`;Chromium、Firefox、Safari ≥ 15.5
+都支持嵌套 worker),把校验过的 core 字节交给它;该 worker 通过 blob URL 导入 core 并设置 `wasmBinary`,core 自己不发任何请求。任务逐个在 MEMFS
+(`/w/`)里执行,结束即删除文件。ffmpeg 的 `exec` 是同步的、无法中断,所以**取消节点会直接终止 ffmpeg worker**,下一个任务从缓存的 core 重新
+启动(约 0.4–0.7 s)。无法创建嵌套 worker 时,core 直接在插件 worker 里运行。core 的 `ffprobe` 入口不可重入(会保留上一次的选项并破坏下一次
+`exec`),所以不用它,流信息取自 ffmpeg 自己打印的输入信息(`ffmpeg -i`)。
+
+**只用单线程版。** `@ffmpeg/core-mt` 需要 `SharedArrayBuffer`,也就是跨源隔离,还要额外的 worker 文件;宿主页面目前没有跨源隔离,而多数兜底任务
+(复制码流、取单帧、解码音频)主要耗在 I/O 上。暂不实现;要做的话,在 `models.json` 里再加一条,只在 `crossOriginIsolated` 为 true 时使用。
+
+**实测**(Chromium 无头,Apple Silicon,core 来自本地 model base):首次使用 ffmpeg 0.4–0.7 s(读缓存 + 编译);AVI/WMV/MPEG-TS 取首帧或尾帧
+15–45 ms,抽音轨 25–45 ms;1.5 s 的 WMA 转写共 6.5 s(主要是加载 SenseVoice);50 s 720p H.264 取尾帧 2.9 s(Mediabunny 0.3 s),复制码流转封装
+26 ms。重编码最慢:wasm 单线程 x264 用 preset `fast` 拼接 56 s 720p 用了 197 s(约 7 fps),插件因此用 `veryfast`(两者都是 CRF 23),同样的拼接 66 s(约 21 fps)。同一个 50 s 720p 文件做 `split-video`:Mediabunny 65 s,
+`transnetv2+ffmpeg-wasm` 87 s(TransNetV2 推理部分相同)。
+
 ### 包体
 
 所有库都是懒加载的动态 import:入口只有 12 kB,每种格式只加载自己需要的部分。首次使用时的 gzip 传输量(含依赖的 chunk)见上方英文表格。
@@ -1035,7 +1238,7 @@ snakers4 的 v5.1.2)、CED 字节一致;CAM++ 是较早的导出,GitHub 上的�
 - pptx 约 124 kB;
 - html 约 426 kB;
 - epub 约 514 kB;
-- 音视频约 192 kB;
+- 音视频节点约 196 kB(Mediabunny)加胶水 5.6 kB;用到 ffmpeg.wasm 兜底时另加胶水约 5 kB,再从 model base 下载 core(JS 111 kB + wasm 32.2 MB,gzip 约 9.6 MB,之后走缓存);
 - 语种识别约 558 kB;
 - 向量化:transformers.js 123 kB + onnxruntime-web 42 kB,ort wasm gzip 7.1 MB(原始 28.7 MB),另加模型 24 MB(bge-base 为 103 MB);
 - 切块 1.8 kB,kb-write 0.9 kB,宿主入口 `kb-host.js` / `embed-query.js` 各约 0.6 kB;
@@ -1057,7 +1260,13 @@ npm run test:browser   # 先构建,再跑 vitest 浏览器模式(Playwright Chro
                        # 把 dist/index.js 当 module worker 按协议 v1 调用,
                        # 并用 createWorkerEdgeExecutor + runWorkflow 跑一遍
 npm run fixtures       # 重新生成 test/fixtures(需要 LibreOffice、ffmpeg、Playwright)
+npm run fixtures:media # test/fixtures/media(AVI、WMV、WMA、MPEG-TS、MP4;需要 ffmpeg)
 ```
+
+ffmpeg.wasm 测试(`test/browser/ffmpeg.test.ts`)需要 `EDGE_MODELS_DIR` 下有 `npm/@ffmpeg/core@0.12.10/dist/esm/` 里的 core(从
+`node_modules/@ffmpeg/core/dist/esm/` 复制 `ffmpeg-core.{js,wasm}`;`@ffmpeg/core` 作为锁定版本的 devDependency 正是为此和校验和测试而装);
+没有时这些测试跳过,只跑 Mediabunny 复制码流的测试。AMR-NB 测试只在存在 `test/fixtures/media/hello-zh.amr` 时运行:Homebrew 的 ffmpeg 没有
+AMR-NB 编码器(`libopencore_amrnb`),所以提交的素材里没有这个文件。
 
 **T3 测试从不下载模型。** Node 测试覆盖纯逻辑(提示词、JSON 修复、图片尺寸、TFV1、进度节流、配额与 WebGPU 检查)和基于假
 transformers.js 的运行时胶水(共享加载、取消下载、显存回收、流式、取消)。默认浏览器测试检查每个 T3 方法都给出 WebGPU 错误(无头
@@ -1085,7 +1294,8 @@ model base,目录挂在 `/models/`,Chromium 加 `--enable-unsafe-webgpu` 启动(
 
 ### 许可证
 
-本插件采用 AGPL-3.0,与 TongFlow 及其官方插件一致。打包的第三方库中没有 AGPL,也没有仅限 GPL 的库。
+本插件采用 AGPL-3.0,与 TongFlow 及其官方插件一致。打包的第三方库中没有 AGPL,也没有仅限 GPL 的库。ffmpeg.wasm core 是
+GPL-2.0-or-later,**运行时下载,不打包**(见下)。
 需要注意的有两个:
 
 - **jszip**:MIT 或 GPL-3.0 双许可,这里按 MIT 使用;
@@ -1094,4 +1304,13 @@ model base,目录挂在 `/models/`,Chromium 加 `--enable-unsafe-webgpu` 启动(
 T3 运行时新增:transformers.js 4.3.2(Apache-2.0)、transformers-structured-output 4.3.2(Apache-2.0)、onnxruntime-web 1.31.1(MIT,
 声明见 `licenses/onnxruntime-web-MIT.txt`)。模型权重不在本包内,由宿主的 model base 提供;LFM2.5-350M 的许可证全文在 `licenses/`。T1 视觉模型均为 Apache-2.0(PaddlePaddle 各模型、D-FINE)或 MIT(TransNetV2),署名见上文「T1 视觉/文档节点」。
 
-完整列表见英文部分的表格。以下项目刻意未用:MuPDF.js 和 scribe.js(AGPL-3.0)、ffmpeg.wasm core(GPL-2.0+)、Ultralytics 系模型(AGPL-3.0)。
+- **@ffmpeg/core 0.12.10**(ffmpeg.wasm,FFmpeg n5.1.4):GPL-2.0-or-later。不在 `dist/` 里,首次使用时从 model base 下载,未经修改。
+  许可证全文见 `licenses/GPL-2.0.txt`,对应源码见 `licenses/ffmpeg-wasm-NOTICE.txt` 和 `models.json`。
+
+**为什么改用 ffmpeg.wasm。** 起初为了不引入 GPL 代码而没有用它。现在启用,是因为仅靠浏览器读不了 AVI、WMV/WMA、RealMedia、AMR、MPEG-2,
+而用户确实会上传这些格式;项目以 AGPL-3.0 开源,GPL-2.0-or-later 的代码可以与之结合(按 GPL-3.0 取用,AGPL-3.0 第 13 条),所以带 x264/x265 的
+GPL 版本可以接受。履行的义务:使用官方、未修改的 `@ffmpeg/core` 0.12.10;随附 GPL-2.0 全文(`licenses/GPL-2.0.txt`);`licenses/ffmpeg-wasm-NOTICE.txt`
+和 `models.json` 写明对应源码(ffmpegwasm/ffmpeg.wasm 提交 `71aa99d37c02a7b4c435275ca9ef50e612f6efa1`,tag `v12.15`,其中锁定了 FFmpeg n5.1.4
+和所有依赖库的版本);镜像 core 的宿主应在同一目录提供该 NOTICE 和许可证。core 在独立的 worker 里运行,不属于插件包。
+
+完整列表见英文部分的表格。以下项目仍刻意未用:MuPDF.js 和 scribe.js(AGPL-3.0)、Ultralytics 系模型(AGPL-3.0)。

@@ -53,7 +53,8 @@ export const unpoisonedOrtChains = {
 
 export default defineConfig({
     plugins: [noThirdPartyHosts, unpoisonedOrtChains],
-    entry: ["src/index.ts", "src/embed-query.ts", "src/kb-host.ts"],
+    // `ffmpeg-worker` is the nested worker ffmpeg.wasm runs in (dist/ffmpeg-worker.js).
+    entry: ["src/index.ts", "src/embed-query.ts", "src/kb-host.ts", "src/ffmpeg-worker.ts"],
     format: "esm",
     platform: "browser",
     target: "es2022",

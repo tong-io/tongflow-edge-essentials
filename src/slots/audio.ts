@@ -12,7 +12,7 @@ const pipeline = () => import("../audio/pipeline.js");
 export const transcribe: SlotImpl<"transcribe"> = (input, ctx) =>
     guard(ctx, async () => {
         const bytes = readAsset(input.audio, "audio");
-        const text = await (await pipeline()).transcribe(bytes, input.language, ctx);
+        const text = await (await pipeline()).transcribe(bytes, input.language, ctx, input.audio.filename);
         return { success: true, text };
     });
 
@@ -26,13 +26,13 @@ export const vadSegment: SlotImpl<"vad-segment"> = (input, ctx) =>
 export const diarizeSpeakers: SlotImpl<"diarize-speakers"> = (input, ctx) =>
     guard(ctx, async () => {
         const bytes = readAsset(input.audio, "audio");
-        const segments = await (await pipeline()).diarizeSpeakers(bytes, ctx);
+        const segments = await (await pipeline()).diarizeSpeakers(bytes, ctx, input.audio.filename);
         return { success: true, segments };
     });
 
 export const audioTag: SlotImpl<"audio-tag"> = (input, ctx) =>
     guard(ctx, async () => {
         const bytes = readAsset(input.audio, "audio");
-        const tags = await (await pipeline()).audioTag(bytes, ctx);
+        const tags = await (await pipeline()).audioTag(bytes, ctx, input.audio.filename);
         return { success: true, tags };
     });

@@ -1,7 +1,8 @@
 /**
  * tongflow-edge-essentials: browser edge nodes (T0 zero-model nodes, knowledge-base nodes,
  * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, EmbeddingGemma 2, LFM2.5-350M; and the T2 audio nodes:
- * SenseVoiceSmall, Silero VAD, pyannote + CAM++, CED-tiny).
+ * SenseVoiceSmall, Silero VAD, pyannote + CAM++, CED-tiny; and the media nodes on
+ * Mediabunny + WebCodecs with ffmpeg.wasm as fallback / selectable implementation).
  *
  * The default export is `defineEdgePlugin({ methods })`: loaded in a dedicated Web
  * Worker it answers the engine's worker protocol; imported anywhere else (the
@@ -81,6 +82,10 @@ export declare const methods: {
   renderPages: import("tongflow/engine/worker").EdgeMethod<"render-pages">;
   extractAudio: import("tongflow/engine/worker").EdgeMethod<"extract-audio">;
   getFirstFrame: import("tongflow/engine/worker").EdgeMethod<"get-first-frame">;
+  getLastFrame: import("tongflow/engine/worker").EdgeMethod<"get-last-frame">;
+  concatVideos: import("tongflow/engine/worker").EdgeMethod<"concat-videos">;
+  removeVideoAudio: import("tongflow/engine/worker").EdgeMethod<"remove-video-audio">;
+  mergeVideoAudio: import("tongflow/engine/worker").EdgeMethod<"merge-video-audio">;
   detectLanguage: import("tongflow/engine/worker").EdgeMethod<"detect-language">;
   chunkText: import("tongflow/engine/worker").EdgeMethod<"chunk-text">;
   embedText: import("tongflow/engine/worker").EdgeMethod<"embed-text">;
@@ -112,6 +117,10 @@ export declare const slots: {
   readonly "render-pages": "renderPages";
   readonly "extract-audio": "extractAudio";
   readonly "get-first-frame": "getFirstFrame";
+  readonly "get-last-frame": "getLastFrame";
+  readonly "concat-videos": "concatVideos";
+  readonly "remove-video-audio": "removeVideoAudio";
+  readonly "merge-video-audio": "mergeVideoAudio";
   readonly "detect-language": "detectLanguage";
   readonly "chunk-text": "chunkText";
   readonly "embed-text": "embedText";
@@ -151,6 +160,10 @@ export declare const impls: {
   renderPages: SlotImpl<"render-pages">;
   extractAudio: SlotImpl<"extract-audio">;
   getFirstFrame: SlotImpl<"get-first-frame">;
+  getLastFrame: SlotImpl<"get-last-frame">;
+  concatVideos: SlotImpl<"concat-videos">;
+  removeVideoAudio: SlotImpl<"remove-video-audio">;
+  mergeVideoAudio: SlotImpl<"merge-video-audio">;
   detectLanguage: SlotImpl<"detect-language">;
   chunkText: SlotImpl<"chunk-text">;
   embedText: SlotImpl<"embed-text">;
@@ -162,6 +175,10 @@ declare const _default: {
     renderPages: import("tongflow/engine/worker").EdgeMethod<"render-pages">;
     extractAudio: import("tongflow/engine/worker").EdgeMethod<"extract-audio">;
     getFirstFrame: import("tongflow/engine/worker").EdgeMethod<"get-first-frame">;
+    getLastFrame: import("tongflow/engine/worker").EdgeMethod<"get-last-frame">;
+    concatVideos: import("tongflow/engine/worker").EdgeMethod<"concat-videos">;
+    removeVideoAudio: import("tongflow/engine/worker").EdgeMethod<"remove-video-audio">;
+    mergeVideoAudio: import("tongflow/engine/worker").EdgeMethod<"merge-video-audio">;
     detectLanguage: import("tongflow/engine/worker").EdgeMethod<"detect-language">;
     chunkText: import("tongflow/engine/worker").EdgeMethod<"chunk-text">;
     embedText: import("tongflow/engine/worker").EdgeMethod<"embed-text">;
