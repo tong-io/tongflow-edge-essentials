@@ -1,0 +1,1 @@
+import{t as e}from"./msgreader-IbJWdB9n.js";export default e();

@@ -1,0 +1,1 @@
+export{t as DEFAULT_PDFIUM_WASM_URL,n as init}from"./pdfium-UjAVH5Hm.js";

@@ -1,0 +1,1 @@
+export{n as openPdf}from"./pdfjs-Cq0r5Qpk.js";
