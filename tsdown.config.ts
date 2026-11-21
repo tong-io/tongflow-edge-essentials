@@ -49,8 +49,10 @@ export default defineConfig({
                 { name: "xberg", test: /node_modules[\\/]@xberg-io[\\/]/ },
                 { name: "mediabunny", test: /node_modules[\\/]mediabunny[\\/]/ },
                 { name: "eld", test: /node_modules[\\/]eld[\\/]/ },
+                // T3 (WebGPU) runtime: transformers.js + onnxruntime-web (one pinned version).
                 { name: "onnxruntime-web", test: /node_modules[\\/](onnxruntime-web|onnxruntime-common)[\\/]/ },
-                { name: "transformers", test: /node_modules[\\/]@huggingface[\\/]/ },
+                { name: "transformers", test: /node_modules[\\/]@huggingface[\\/]transformers[\\/]/ },
+                { name: "structured-output", test: /node_modules[\\/]@huggingface[\\/]transformers-structured-output[\\/]/ },
             ],
         },
     },

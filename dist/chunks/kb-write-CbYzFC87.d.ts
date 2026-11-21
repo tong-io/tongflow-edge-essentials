@@ -32,6 +32,10 @@ interface EdgeContext {
    * to a same-origin URL the worker can fetch. Directory paths end with `/`.
    */
   resolveAsset(relPath: string): string;
+  /** The slot this call runs for (one method may serve several slots). */
+  nodeSlot?: string;
+  /** Advanced params from the node (`_params`); `{}` when none. */
+  params?: Record<string, unknown>;
 }
 /**
  * Adapt the engine's ctx. The engine has no asset resolver: assets live next to the

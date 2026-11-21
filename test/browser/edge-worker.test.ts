@@ -11,10 +11,14 @@ describe("built plugin as a DOM-less module worker, over the engine protocol (Ch
         expect(ready.methods?.sort()).toEqual([
             "chunkText",
             "detectLanguage",
+            "embedImage",
             "embedText",
             "extractAudio",
+            "genText",
             "getFirstFrame",
+            "imageGenText",
             "kbWrite",
+            "ocrImageGlm",
             "parseDocument",
             "renderPages",
         ]);

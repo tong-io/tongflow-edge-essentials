@@ -9,7 +9,7 @@
  * protocol change is involved: this is ordinary executor composition.
  */
 import { NodeExecutor } from "tongflow/engine";
-import { t as KbWriteSummary } from "./chunks/kb-write-COu0Ml-F.js";
+import { t as KbWriteSummary } from "./chunks/kb-write-CbYzFC87.js";
 export interface KbWritePayload {
   /** The source file name (`kb-write`'s `source`, i.e. `IngestMeta.fileName`). */
   source: string;

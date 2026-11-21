@@ -9,7 +9,9 @@ documents, renders PDF pages, pulls audio and first frames out of videos, detect
 of a text, and chunks and embeds text for an on-device knowledge base. All of it runs inside the
 user's browser, in a Web Worker, through TongFlow's browser engine. Files never leave the device.
 The document, media and language nodes are **T0 (zero-model)**; `embed-text` downloads a 24 MB
-model from the host's model base on first use.
+model from the host's model base on first use. Optional **T3 (WebGPU)** nodes add image
+understanding, GLM-OCR, image embeddings and key-point extraction with 250–850 MB models; see
+[T3 WebGPU nodes](#t3-webgpu-nodes).
 
 ### Slots
 
@@ -212,6 +214,100 @@ names are the `method` values in `tongflow.plugin.json`.
 - Inputs over 100 MB are refused (the edge runtime's per-file cap). Binary outputs are returned
   as inline `Asset`s (`bytesBase64`); the engine stores them and hands file refs downstream.
 
+### T3 WebGPU nodes
+
+Optional nodes with real models, **only on WebGPU**. Each method first checks
+`self.navigator.gpu` and a GPU adapter, and fails with a clear error (`this node needs WebGPU …`)
+when either is missing; nothing is downloaded then. Hosts should keep them off by default, ask the
+user before the first run (the size is in `models.json` / the exported `T3_MODELS`), and show the
+storage quota.
+
+| Slot | Method | Model (`models`) | What it does |
+|---|---|---|---|
+| `image-gen-text` | `imageGenText` | `qwen3.5-0.8b` | What the canvas `imageGenTextNode` runs. `text` (prompt, may be blank) + optional `image`; honours `system`, `max_new_tokens` (512), `enable_thinking` (off), `temperature` (0.7, 0 = greedy), `top_p` (0.8), `top_k` (20). Without a prompt it describes the image **in Simplified Chinese**; the default system prompt keeps answers in Chinese. Without an image it is a plain text chat. |
+| `image-describe` | `imageGenText` (same method) | `qwen3.5-0.8b` | `image` + optional `text` / `userPrompt`; same behaviour. |
+| `ocr-image` (alternative) | `ocrImageGlm` | `glm-ocr` | GLM-OCR page reading, Markdown out (tables included). Not the slot default: see [Alternative implementations](#alternative-implementations). |
+| `embed-image` | `embedImage` | `embeddinggemma-2` | One L2-normalized 768-d vector per image, as a `vectors` file in the TFV1 format (below). Same space as EmbeddingGemma 2 text embeddings (query prefix `task: search result \| query: `). The audio encoder is never loaded. |
+| `gen-text` | `genText` | `lfm2.5-350m` | Structured key-point extraction from `text`; `userPrompt` narrows it. The decoder is constrained to the JSON schema `{"key_points": string[]}` (transformers.js structured output) and `text` is that JSON. The instruction follows the document's language (a Chinese document gets a Chinese prompt and Chinese key points). |
+
+Advanced params (`_params`): `max_new_tokens` everywhere; `max_pixels` for the vision models
+(Qwen3.5 default 448², GLM-OCR 1024²: the image is resized to that pixel budget, keeping the
+aspect ratio, because every 32 × 32 (Qwen) / 28 × 28 (GLM) square is one prompt token and prefill
+dominates the latency); `dims` for `embed-image` (768, or the Matryoshka sizes 512 / 256 / 128);
+`max_input_tokens` for `gen-text` (default 4096; longer text is cut).
+
+**Behaviour.**
+- *Streaming.* Generated tokens are streamed into `progress` (`extracting: 37 tokens · …tail`),
+  after a `reading the input (N tokens)` message for the prefill.
+- *Cancellation.* `cancel` aborts at the next generated token and the call rejects with the abort.
+  A model download nobody waits for any more is cancelled too (several nodes waiting for the same
+  model share one download).
+- *Downloads and cache.* Weights are reported through `modelDownload` (`loaded` / `total` summed
+  over the model's files, `file` = `"<model> · <file>"`) and stored by transformers.js in the
+  Cache API bucket `transformers-cache`, so a model downloads once per browser profile. Before
+  downloading, the plugin checks `navigator.storage.estimate()` and fails clearly if the quota
+  cannot hold the model. `navigator.storage.persist()` is window-only: **the host page should
+  call it** before the first T3 run so the browser does not evict the models.
+- *GPU memory.* At most two models stay loaded; the least recently used idle one is disposed.
+- *Precision.* With `shader-f16` the q4f16 weights load (fp16 vision tower for Qwen3.5); without it
+  the q4 ones.
+
+**Models** (first download, with `shader-f16` / without):
+
+| Id | Repo (`<modelBase>/<org>/<repo>/`) | Download | License |
+|---|---|---|---|
+| `qwen3.5-0.8b` | `onnx-community/Qwen3.5-0.8B-ONNX` | 810 / 740 MB | Apache-2.0 |
+| `glm-ocr` | `onnx-community/GLM-OCR-ONNX` | 660 / 745 MB | MIT |
+| `embeddinggemma-2` | `onnx-community/embeddinggemma-2-ONNX` (text + vision only) | 290 / 316 MB | Apache-2.0; deployments must follow the [Gemma Prohibited Use Policy](https://gemma.ai/resources/prohibited-use/) |
+| `lfm2.5-350m` | `LiquidAI/LFM2.5-350M-ONNX` | 259 / 297 MB | **LFM Open License v1.0** (below) |
+
+**Runtime.** The shared transformers.js 4.3.2 / onnxruntime-web 1.31.1 runtime of `embed-text`
+(`src/ml/transformers.ts`, same model base, same `dist/assets/ort/` wasm, same Cache API), with the
+WebGPU device, plus `@huggingface/transformers-structured-output` 4.3.2 for constrained JSON.
+Weights come from the [model base](#model-hosting-model-base) exactly like the embedding models,
+and every file is listed in [`models.json`](#model-manifest) (`approxMB` = first download with
+`shader-f16`; `files` cover both precision sets; a test keeps it in sync with
+`src/ml/catalog.ts`). Several T3 weight files are larger than 100 MB (the Qwen3.5 decoder data is
+437 MB), so a model host with a per-file cap must raise it for these repos. Put each model's
+license next to its weights.
+
+Measured on Apple Silicon (headless Chromium 159, `--enable-unsafe-webgpu --use-angle=metal`,
+Metal adapter with `shader-f16`, model served locally), LFM2.5-350M q4f16, `gen-text` on a
+≈200-character Chinese contract clause: first run 6–11 s (3.5–8 s of it loading 255 MB into the
+Cache API and creating the session), ≈100 tokens of JSON at ≈45 tokens/s; the model resident:
+2.3 s, first token after 0.24 s; a fresh worker with the model in the Cache API: 2.5 s; cancel
+lands within one token.
+
+#### Alternative implementations
+
+The scanner accepts exactly one manifest entry per `nodeSlot` (a second entry for the same slot is
+rejected: `nodeSlot … is declared more than once`), so an alternative implementation is an extra
+**model** in the slot's entry, and the method picks by `ctx.model`. Until the default PP-OCR
+implementation of `ocr-image` lands, this branch declares
+`{"nodeSlot": "ocr-image", "method": "ocrImageGlm", "models": ["glm-ocr"]}`. Once both exist the
+entry becomes `"models": [<PP-OCR ids>…, "glm-ocr"]` with the default method, which routes
+`glm-ocr` here with the exported `withModelAlternative(ocrImage, "glm-ocr", ocrImageGlm)`.
+`ocrImageGlm` itself accepts only `glm-ocr` (or no model).
+
+#### TFV1 vector files
+
+`embed-image` (like `embed-text`) returns `vectors` as a file, `<image stem>.tfv1`,
+`application/octet-stream`, little-endian: magic `"TFV1"`, `u32 dims`, `u32 count`, then
+`count × dims` float32 row-major. It is the format scanall's `@scanall/kb` reads.
+
+#### LFM2.5-350M license: revenue threshold
+
+LFM2.5-350M is under the **LFM Open License v1.0**, whose full text ships in
+[`licenses/LFM-Open-License-v1.0.txt`](licenses/LFM-Open-License-v1.0.txt) and must be given to
+anyone the weights are redistributed to (a web demo that serves them to browsers redistributes
+them). **Commercial use is licensed only while the user's Legal Entity — together with every
+entity it controls, is controlled by or is under common control with — has annual revenue below
+USD 10 million** (the license's "Threshold", §1 and §5). Use "for direct or indirect commercial
+advantage" counts as commercial, so a free demo that promotes a company does too. Before enabling
+`gen-text` in a deployment, confirm who operates it and that its group is under the threshold;
+if it is not, leave the slot off or pick another model. Mark any modified weight files as modified
+(§4(b)). The license grants no trademark rights.
+
 ### Bundle
 
 Every library is a lazy dynamic import, so the entry is 12 kB and each format loads only what it
@@ -234,6 +330,8 @@ needs. Gzip transfer on first use, chunks included:
 | chunk-text / kb-write | 1.8 kB / 0.9 kB |
 | embed-text (and `embedQuery`) | transformers.js 123 kB + onnxruntime-web 42 kB + glue 3 kB, ort wasm 7.1 MB (28.7 MB raw), + the model (24 MB, or 103 MB for bge-base) |
 | `dist/kb-host.js` / `dist/embed-query.js` (host entries) | 0.6 kB / 0.65 kB |
+| any T3 node (WebGPU) | slot glue ≈ 6 kB + the same transformers.js / onnxruntime-web / ort wasm, then the model (250–850 MB) |
+| gen-text | + structured output ≈ 15 kB |
 
 `dist/` is committed: the scanner requires the manifest's `entry` to exist, and hosts load the
 plugin straight from a clone. Rebuild it after any source change.
@@ -265,6 +363,14 @@ serves the test page cross-origin isolated (threaded onnxruntime-web). Timings l
 ```bash
 EDGE_MODELS_DIR=../.models-cache npm run test:browser   # files from modelscope.cn/models/<org>/<repo>/resolve/master/<path>
 ```
+
+**T3 tests never download a model.** In Node they cover the pure parts (prompts, JSON salvage,
+image sizing, TFV1, progress throttling, quota and WebGPU checks) and the runtime glue against a
+fake transformers.js (shared loads, download cancel, eviction, streaming, cancel). The default
+browser run checks that every T3 method fails with the WebGPU error (headless Chromium has no GPU
+adapter). Real inference runs only with `EDGE_MODELS_DIR` (above), which also launches Chromium with `--enable-unsafe-webgpu`
+(plus `--use-angle=metal` on macOS, which exposes the real GPU headless; `EDGE_WEBGPU=1` alone
+adds the flags) and runs each model whose files are present; the others are skipped.
 
 **The `tongflow` dependency** is a `file:` link to a TongFlow checkout at
 `../../tongflow/packages/tongflow` (that is, `tongflow` cloned next to the directory holding this
@@ -322,6 +428,15 @@ and none is GPL-only.
 | @huggingface/transformers (transformers.js) | 4.3.2 | Apache-2.0 | Plus @huggingface/jinja, @huggingface/tokenizers (Apache-2.0) |
 | onnxruntime-web | 1.31.1 | MIT | Microsoft; the wasm ships in `dist/assets/ort/` |
 | tongflow (engine/worker) | 1.0.0 (monorepo) | AGPL-3.0 | First-party; `defineEdgePlugin` and `edgeMethod` |
+| @huggingface/transformers (transformers.js) | 4.3.2 | Apache-2.0 | T3 only; bundles @huggingface/jinja and @huggingface/tokenizers (Apache-2.0) |
+| @huggingface/transformers-structured-output | 4.3.2 | Apache-2.0 | `gen-text` only |
+| onnxruntime-web | 1.31.1 | MIT | Bundled JS + `dist/assets/ort/` wasm; notice in `licenses/onnxruntime-web-MIT.txt` |
+
+Model weights are not part of this package; they are downloaded from the host's model base. Their
+licenses are in the [T3 models table](#t3-webgpu-nodes); LFM2.5-350M's full text is in
+`licenses/`. Attribution for the about page: "Qwen3.5-0.8B by the Qwen team, Alibaba Cloud
+(Apache-2.0)", "GLM-OCR by Zhipu AI (MIT)", "EmbeddingGemma 2 by Google DeepMind (Apache-2.0,
+Gemma Prohibited Use Policy)", "LFM2.5-350M by Liquid AI, Inc. (LFM Open License v1.0)".
 
 Avoided on purpose: MuPDF.js and scribe.js (AGPL-3.0), the ffmpeg.wasm core (GPL-2.0+) and the
 Ultralytics models (AGPL-3.0).
@@ -334,7 +449,7 @@ Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (
 
 [TongFlow](https://github.com/tong-io/tongflow) 官方**浏览器端边缘插件**。它在用户浏览器的 Web Worker 里,通过 TongFlow
 浏览器引擎完成以下工作:解析文档、把 PDF 渲染成页面图、从视频中抽取音轨和首帧、识别文本语种,以及为端侧知识库切块和计算向量。
-文件不出设备。文档、音视频、语种节点是 **T0(零模型)** 节点;`embed-text` 首次使用时从宿主的 model base 下载 24 MB 模型。
+文件不出设备。文档、音视频、语种节点是 **T0(零模型)** 节点;`embed-text` 首次使用时从宿主的 model base 下载 24 MB 模型。另有可选的 **T3(WebGPU)** 节点:图像理解、GLM-OCR、图像向量、要点抽取,模型 250–850 MB,见下文「T3 WebGPU 节点」。
 
 ### 实现的 slot
 
@@ -463,6 +578,60 @@ transformers.js **4.3.2** + onnxruntime-web **1.31.1**(所有 ML 节点共用这
 - **失败与取消**:失败时返回 `{ success: false, error }`,只中止本节点所在的支路。运行被取消(`signal` 触发 abort)时直接抛出 abort 错误。
 - 超过 100 MB 的输入会被拒绝(边缘运行时的单文件上限)。二进制输出以内联 `Asset`(`bytesBase64`)返回,由引擎存储,再以文件引用传给下游。
 
+### T3 WebGPU 节点
+
+可选的真模型节点,**只在 WebGPU 下可用**。每个方法先检查 `self.navigator.gpu` 和 GPU adapter,缺任何一个就明确报错
+(`this node needs WebGPU …`),不会下载任何东西。宿主应默认关闭这些节点,首次运行前提示用户下载体积(见 `models.json` 或导出的
+`T3_MODELS`),并显示存储配额。
+
+| Slot | 方法 | 模型(`models`) | 作用 |
+|---|---|---|---|
+| `image-gen-text` | `imageGenText` | `qwen3.5-0.8b` | 画布 `imageGenTextNode` 用的 slot。`text`(提示词,可为空)加可选 `image`;支持 `system`、`max_new_tokens`(512)、`enable_thinking`(默认关)、`temperature`(0.7,0 为贪心)、`top_p`(0.8)、`top_k`(20)。没有提示词时**用简体中文描述图片**,默认 system 提示也要求中文作答;没有图片时就是纯文本对话 |
+| `image-describe` | `imageGenText`(同一方法) | `qwen3.5-0.8b` | `image` 加可选 `text`/`userPrompt`,行为相同 |
+| `ocr-image`(备选实现) | `ocrImageGlm` | `glm-ocr` | GLM-OCR 整页识别,输出 Markdown(含表格)。不是该 slot 的默认实现,见下文「备选实现」 |
+| `embed-image` | `embedImage` | `embeddinggemma-2` | 每张图一条 L2 归一化的 768 维向量,以 TFV1 格式的 `vectors` 文件输出;与 EmbeddingGemma 2 文本向量同一空间。不加载音频编码器 |
+| `gen-text` | `genText` | `lfm2.5-350m` | 从 `text` 做结构化要点抽取,`userPrompt` 可限定范围。解码受 JSON schema `{"key_points": string[]}` 约束(transformers.js 结构化输出),输出 `text` 即该 JSON。提示词跟随原文语言:中文原文用中文指令、出中文要点 |
+
+高级参数(`_params`):均支持 `max_new_tokens`;视觉模型支持 `max_pixels`(Qwen3.5 默认 448²,GLM-OCR 默认 1024²,按像素预算等比缩放,
+因为每 32×32(Qwen)/28×28(GLM)像素就是一个提示 token,prefill 决定耗时);`embed-image` 支持 `dims`(768,或 Matryoshka 的
+512/256/128);`gen-text` 支持 `max_input_tokens`(默认 4096,超出截断)。
+
+**行为**
+
+- 流式:生成的 token 实时写进 `progress`(`extracting: 37 tokens · …末尾文字`),之前先报 `reading the input (N tokens)`(prefill)。
+- 取消:`cancel` 在下一个 token 处停止,调用以 abort 错误结束;没有任何节点再等待的模型下载也会被取消(多个节点等同一模型时共用一次下载)。
+- 下载与缓存:通过 `modelDownload` 上报(`loaded`/`total` 为该模型所有文件之和,`file` 为 `"<模型> · <文件>"`);transformers.js 把文件存进
+  Cache API 的 `transformers-cache`,同一浏览器配置只下载一次。下载前用 `navigator.storage.estimate()` 检查配额,装不下就明确报错。
+  `navigator.storage.persist()` 只在页面里可用:**宿主页面应在首次运行 T3 前调用它**,避免浏览器回收模型。
+- 显存:最多常驻两个模型,超出时释放最久未用的空闲模型。
+- 精度:adapter 支持 `shader-f16` 时用 q4f16 权重(Qwen3.5 视觉塔用 fp16),否则用 q4。
+
+**模型**(首次下载量,有 / 无 `shader-f16`):Qwen3.5-0.8B 810/740 MB(Apache-2.0);GLM-OCR 660/745 MB(MIT);EmbeddingGemma 2
+文本+视觉 290/316 MB(Apache-2.0,另须遵守 Gemma 禁止使用政策);LFM2.5-350M 259/297 MB(**LFM Open License v1.0**)。
+
+**运行时**:与 `embed-text` 共用 `src/ml/transformers.ts`(transformers.js 4.3.2 / onnxruntime-web 1.31.1、同一 model base、同一
+`dist/assets/ort/` wasm、同一 Cache API),使用 WebGPU device;结构化输出用 `@huggingface/transformers-structured-output` 4.3.2。
+权重同样从 model base 获取,全部文件列在 `models.json`(`approxMB` 为支持 `shader-f16` 时的首次下载量,`files` 覆盖两套精度,
+由测试与 `src/ml/catalog.ts` 保持一致)。部分权重文件超过 100 MB(Qwen3.5 decoder 数据 437 MB),模型服务器若有单文件上限需对这些仓库放开。
+
+实测(Apple Silicon,无头 Chromium 159 加 `--enable-unsafe-webgpu --use-angle=metal`,Metal adapter 支持 `shader-f16`,模型本地提供):
+LFM2.5-350M q4f16 对约 200 字的中文合同条款做 `gen-text`,首次 6–11 s(其中 3.5–8 s 为把 255 MB 写入 Cache API 并创建 session),
+约 100 个 token、约 45 token/s;模型常驻时 2.3 s,首个 token 0.24 s;新 worker 从 Cache API 加载 2.5 s;取消在一个 token 内生效。
+
+**备选实现**:scanner 规定每个 `nodeSlot` 只能有一条 manifest 记录(重复会被拒:`declared more than once`),所以备选实现是该 slot
+记录里多一个**模型**,方法按 `ctx.model` 分派。默认的 PP-OCR 实现合入之前,本分支先声明
+`{"nodeSlot": "ocr-image", "method": "ocrImageGlm", "models": ["glm-ocr"]}`;两者都在时改成默认方法加 `"models": [<PP-OCR>…, "glm-ocr"]`,
+默认方法用导出的 `withModelAlternative(ocrImage, "glm-ocr", ocrImageGlm)` 把 `glm-ocr` 转到这里。
+
+**TFV1 向量文件**:`<图片名>.tfv1`,`application/octet-stream`,小端:魔数 `"TFV1"`、`u32 dims`、`u32 count`,之后是
+`count × dims` 个 float32(行优先),即 scanall `@scanall/kb` 读取的格式。
+
+**LFM2.5-350M 许可证的收入门槛**:LFM2.5-350M 采用 **LFM Open License v1.0**,全文见
+[`licenses/LFM-Open-License-v1.0.txt`](licenses/LFM-Open-License-v1.0.txt),再分发权重时必须随附(网页 demo 把权重发给浏览器即属再分发)。
+**只有当使用方的法律实体(连同其控制、受其控制或与其同受控制的所有关联实体)年收入低于 1000 万美元时,商业使用才在授权范围内**
+(许可证的 "Threshold",§1、§5)。"直接或间接商业利益" 都算商业使用,替公司揽客的免费 demo 也算。启用 `gen-text` 前,必须由业务方确认运营主体
+及其关联方收入低于门槛;否则不要开启该 slot,或改用其它模型。修改过的权重文件要标注已修改(§4(b));许可证不授予商标权。
+
 ### 包体
 
 所有库都是懒加载的动态 import:入口只有 12 kB,每种格式只加载自己需要的部分。首次使用时的 gzip 传输量(含依赖的 chunk)见上方英文表格。
@@ -479,7 +648,8 @@ transformers.js **4.3.2** + onnxruntime-web **1.31.1**(所有 ML 节点共用这
 - 语种识别约 558 kB;
 - 向量化:transformers.js 123 kB + onnxruntime-web 42 kB,ort wasm gzip 7.1 MB(原始 28.7 MB),另加模型 24 MB(bge-base 为 103 MB);
 - 切块 1.8 kB,kb-write 0.9 kB,宿主入口 `kb-host.js` / `embed-query.js` 各约 0.6 kB;
-- 老格式 91 kB,另加 wasm 约 17.3 MB。
+- 老格式 91 kB,另加 wasm 约 17.3 MB;
+- T3 节点:同一套 transformers.js / onnxruntime-web / ort wasm,再加模型本身(250–850 MB);`gen-text` 另加结构化输出约 15 kB。
 
 `dist/` 会提交进仓库:scanner 要求 manifest 的 `entry` 文件存在,宿主也是克隆仓库后直接加载。改动源码后要重新构建。
 
@@ -495,6 +665,12 @@ npm run test:browser   # 先构建,再跑 vitest 浏览器模式(Playwright Chro
                        # 并用 createWorkerEdgeExecutor + runWorkflow 跑一遍
 npm run fixtures       # 重新生成 test/fixtures(需要 LibreOffice、ffmpeg、Playwright)
 ```
+
+**T3 测试从不下载模型。** Node 测试覆盖纯逻辑(提示词、JSON 修复、图片尺寸、TFV1、进度节流、配额与 WebGPU 检查)和基于假
+transformers.js 的运行时胶水(共享加载、取消下载、显存回收、流式、取消)。默认浏览器测试检查每个 T3 方法都给出 WebGPU 错误(无头
+Chromium 没有 GPU adapter)。真实推理只在设置本地模型目录时运行:`EDGE_MODELS_DIR=/path/to/models npm run test:browser`。目录结构同
+model base,目录挂在 `/models/`,Chromium 加 `--enable-unsafe-webgpu` 启动(macOS 另加 `--use-angle=metal`,无头模式即可拿到真 GPU;
+单独设 `EDGE_WEBGPU=1` 只加这些参数),目录里有哪个模型就跑哪个,其余跳过。
 
 **`tongflow` 依赖**是 `file:` 链接,指向 `../../tongflow/packages/tongflow`,也就是与本仓库上级目录并列克隆的 TongFlow,并且需要先构建,
 让 `dist/` 里有 engine 入口。npm 上的 `tongflow@1.0.0` 早于边缘 slot 和 `tongflow/engine/worker`,等带这些内容的版本发布后改成版本号依赖。
@@ -521,5 +697,8 @@ npm run fixtures       # 重新生成 test/fixtures(需要 LibreOffice、ffmpeg�
 
 - **jszip**:MIT 或 GPL-3.0 双许可,这里按 MIT 使用;
 - **Mediabunny**:MPL-2.0,属于文件级 copyleft。插件未修改其源码,若修改则须按 MPL-2.0 公开改动的文件。
+
+T3 运行时新增:transformers.js 4.3.2(Apache-2.0)、transformers-structured-output 4.3.2(Apache-2.0)、onnxruntime-web 1.31.1(MIT,
+声明见 `licenses/onnxruntime-web-MIT.txt`)。模型权重不在本包内,由宿主的 model base 提供;LFM2.5-350M 的许可证全文在 `licenses/`。
 
 完整列表见英文部分的表格。以下项目刻意未用:MuPDF.js 和 scribe.js(AGPL-3.0)、ffmpeg.wasm core(GPL-2.0+)、Ultralytics 系模型(AGPL-3.0)。
