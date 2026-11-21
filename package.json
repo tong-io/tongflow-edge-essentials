@@ -40,6 +40,7 @@
         "build": "tsdown && node scripts/copy-assets.mjs",
         "typecheck": "tsc --noEmit",
         "fixtures": "node scripts/gen-fixtures.mjs",
+        "fixtures:media": "node scripts/gen-media-fixtures.mjs",
         "test": "vitest run --project node",
         "test:browser": "npm run build && vitest run --project browser",
         "test:all": "npm run build && vitest run"
@@ -68,6 +69,7 @@
         "xlsx": "file:vendor/xlsx-0.20.3.tgz"
     },
     "devDependencies": {
+        "@ffmpeg/core": "0.12.10",
         "@types/json-schema": "7.0.15",
         "@types/node": "24.19.2",
         "@types/papaparse": "5.5.2",

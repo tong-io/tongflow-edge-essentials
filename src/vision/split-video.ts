@@ -3,13 +3,21 @@
  * low rate by Mediabunny, refined to the exact frame, then one file per shot, remuxed
  * without re-encoding whenever the cut falls on a key frame. Without the model (not
  * mirrored, fails to load) a colour-histogram frame-difference detector is used.
+ *
+ * Files the browser cannot demux or decode (AVI, WMV, MPEG-2, …), or a node whose model
+ * is `transnetv2+ffmpeg-wasm`, take the same steps on ffmpeg.wasm: frames sampled and
+ * refined by ffmpeg, cuts still found by TransNetV2, shots written by ffmpeg (stream copy
+ * from a key frame into MP4, else H.264/AAC). A shot the browser cannot write is handed
+ * to ffmpeg alone.
  */
 import type { EdgeContext } from "../context.js";
 import type { Asset, EdgeSlotOutput, SlotInput } from "../types.js";
 import { encodeBase64 } from "../util/base64.js";
-import { EdgeError, throwIfAborted } from "../util/errors.js";
+import { EdgeError, MediaUnsupportedError, errorMessage, throwIfAborted } from "../util/errors.js";
 import { fileStem } from "../util/text.js";
 import { readAsset } from "../slots/common.js";
+import { withFfmpegFallback } from "../ffmpeg/select.js";
+import { noTrack } from "../media/no-track.js";
 import { fetchModelFile, memo } from "../ml/model-files.js";
 import { type LoadedSession, createDeviceSession, run, tensor } from "../ml/ort.js";
 import {
@@ -160,43 +168,76 @@ export interface ShotInfo {
     end: number;
 }
 
+type Ops = typeof import("../ffmpeg/ops.js");
+const ffmpegOps = (): Promise<Ops> => import("../ffmpeg/ops.js");
+
+/** Shot boundaries (indices into the sampled frames): TransNetV2, else frame differences. */
+async function detect(ctx: EdgeContext, frames: Uint8Array[], threshold: number | undefined): Promise<{ boundaries: number[]; method: string }> {
+    try {
+        const pred = await transnet(ctx, frames, [0.35, 0.6]);
+        return { boundaries: boundariesFromScenes(predictionsToScenes(pred, transnetThreshold(threshold))), method: "transnetv2" };
+    } catch (e) {
+        if (ctx.signal.aborted) throw e;
+        ctx.onProgress({ fraction: 0.6, message: `TransNetV2 unavailable (${e instanceof Error ? e.message : String(e)}); using frame differences` });
+        return { boundaries: diffBoundaries(frames), method: "frame-difference" };
+    }
+}
+
+function shotsFrom(cuts: number[], start: number, duration: number): ShotInfo[] {
+    const shots: ShotInfo[] = [];
+    let s0 = start;
+    for (const c of cuts) {
+        shots.push({ start: s0, end: c });
+        s0 = c;
+    }
+    shots.push({ start: s0, end: duration });
+    return shots;
+}
+
+function sampleTimes(start: number, duration: number, fps: number): number[] {
+    const times: number[] = [];
+    for (let t = start; t < duration - 1e-6; t += 1 / fps) times.push(t);
+    return times;
+}
+
 export async function splitVideo(input: SlotInput<"split-video">, ctx: EdgeContext): Promise<EdgeSlotOutput<"split-video">> {
+    const bytes = readAsset(input.video, "video");
+    return withFfmpegFallback(
+        ctx,
+        "splitting the video",
+        () => splitInBrowser(input, bytes, ctx),
+        () => splitWithFfmpeg(input, bytes, ctx),
+    );
+}
+
+async function splitInBrowser(input: SlotInput<"split-video">, bytes: Uint8Array, ctx: EdgeContext): Promise<EdgeSlotOutput<"split-video">> {
     const video = input.video;
-    const bytes = readAsset(video, "video");
     if (typeof VideoDecoder === "undefined" || typeof OffscreenCanvas === "undefined") {
-        throw new EdgeError("split-video needs WebCodecs and OffscreenCanvas (a browser)");
+        throw new MediaUnsupportedError("this browser has no WebCodecs / OffscreenCanvas");
     }
     const mb: MB = await import("mediabunny");
     const media = new mb.Input({ source: new mb.BufferSource(bytes), formats: mb.ALL_FORMATS });
     try {
-        const track = await media.getPrimaryVideoTrack();
-        if (!track) throw new EdgeError("this file has no video track");
-        if (!(await track.canDecode())) throw new EdgeError(`this browser cannot decode ${track.codec ?? "this"} video`);
+        let track: VideoTrack | null;
+        try {
+            track = await media.getPrimaryVideoTrack();
+        } catch (e) {
+            throw new MediaUnsupportedError(`the browser cannot read this file (${errorMessage(e)})`);
+        }
+        if (!track) throw await noTrack(media, "video");
+        if (!(await track.canDecode())) throw new MediaUnsupportedError(`this browser cannot decode ${track.codec ?? "this"} video`);
         const format = await media.getFormat();
         const start = await track.getFirstTimestamp();
         const duration = await media.computeDuration();
         const stats = await track.computePacketStats(200);
         const nativeFps = stats.averagePacketRate || 25;
         const fps = Math.max(1, Math.min(nativeFps, Number(ctx.params?.fps) || SAMPLE_FPS));
-        const times: number[] = [];
-        for (let t = start; t < duration - 1e-6; t += 1 / fps) times.push(t);
+        const times = sampleTimes(start, duration, fps);
         if (times.length < 2) throw new EdgeError("the video is too short to split");
 
         ctx.onProgress({ fraction: 0, message: `sampling ${times.length} frames at ${fps} fps` });
         const frames = await sampleFrames(mb, track, times, ctx, [0, 0.35]);
-
-        let boundaries: number[];
-        let method = "transnetv2";
-        try {
-            const pred = await transnet(ctx, frames, [0.35, 0.6]);
-            const threshold = transnetThreshold(input.threshold);
-            boundaries = boundariesFromScenes(predictionsToScenes(pred, threshold));
-        } catch (e) {
-            if (ctx.signal.aborted) throw e;
-            method = "frame-difference";
-            ctx.onProgress({ fraction: 0.6, message: `TransNetV2 unavailable (${e instanceof Error ? e.message : String(e)}); using frame differences` });
-            boundaries = diffBoundaries(frames);
-        }
+        const { boundaries, method } = await detect(ctx, frames, input.threshold);
 
         // Exact cut frames, snapped to a key frame when one is within a frame.
         const packets = new mb.EncodedPacketSink(track);
@@ -209,13 +250,7 @@ export async function splitVideo(input: SlotInput<"split-video">, ctx: EdgeConte
             if (key && Math.abs(key.timestamp - t) <= frameDur * 1.01) t = key.timestamp;
             if (t - (cuts.at(-1) ?? start) >= MIN_SHOT_S && duration - t >= MIN_SHOT_S) cuts.push(t);
         }
-        const shots: ShotInfo[] = [];
-        let s0 = start;
-        for (const c of cuts) {
-            shots.push({ start: s0, end: c });
-            s0 = c;
-        }
-        shots.push({ start: s0, end: duration });
+        const shots = shotsFrom(cuts, start, duration);
         ctx.onProgress({ fraction: 0.65, message: `${shots.length} shots (${method})` });
 
         const stem = fileStem(video.filename, "video");
@@ -225,10 +260,23 @@ export async function splitVideo(input: SlotInput<"split-video">, ctx: EdgeConte
             const o = outputFor(mb, format.name, format.mimeType);
             parts.push({ bytesBase64: video.bytesBase64, mime: video.mime ?? o.mime, filename: `${stem}-shot${"1".padStart(pad, "0")}.${o.ext}` });
         } else {
+            const hasAudio = !!(await media.getPrimaryAudioTrack().catch(() => null));
             for (let i = 0; i < shots.length; i++) {
                 const sh = shots[i]!;
-                const r = await cutPart(mb, media, format.name, format.mimeType, sh.start, sh.end, Math.max(0.05, frameDur * 1.5), ctx);
-                parts.push({ bytesBase64: encodeBase64(r.bytes), mime: r.mime, filename: `${stem}-shot${String(i + 1).padStart(pad, "0")}.${r.ext}` });
+                const name = `${stem}-shot${String(i + 1).padStart(pad, "0")}`;
+                let r: { bytes: Uint8Array; ext: string; mime: string };
+                try {
+                    r = await cutPart(mb, media, format.name, format.mimeType, sh.start, sh.end, Math.max(0.05, frameDur * 1.5), ctx);
+                } catch (e) {
+                    if (ctx.signal.aborted) throw e;
+                    // The browser cannot write this shot (no encoder, odd packets): ffmpeg writes it.
+                    ctx.onProgress({ message: `shot ${i + 1}: ${errorMessage(e)}; writing it with ffmpeg.wasm` });
+                    const key = await packets.getKeyPacket(sh.start + frameDur * 0.5);
+                    const onKey = !!key && Math.abs(key.timestamp - sh.start) <= frameDur * 0.5;
+                    const ops = await ffmpegOps();
+                    r = { bytes: await ops.cutPart(ctx, bytes, video.filename, sh.start - start, sh.end - start, onKey, hasAudio), ext: "mp4", mime: "video/mp4" };
+                }
+                parts.push({ bytesBase64: encodeBase64(r.bytes), mime: r.mime, filename: `${name}.${r.ext}` });
                 ctx.onProgress({ fraction: 0.65 + 0.35 * ((i + 1) / shots.length), message: `shot ${i + 1}/${shots.length}` });
             }
         }
@@ -236,4 +284,53 @@ export async function splitVideo(input: SlotInput<"split-video">, ctx: EdgeConte
     } finally {
         media.dispose();
     }
+}
+
+/** The same steps on ffmpeg.wasm: sampling, refinement and shot writing; TransNetV2 still finds the cuts. */
+async function splitWithFfmpeg(input: SlotInput<"split-video">, bytes: Uint8Array, ctx: EdgeContext): Promise<EdgeSlotOutput<"split-video">> {
+    const video = input.video;
+    const ops = await ffmpegOps();
+    const info = await ops.probe(ctx, bytes, video.filename);
+    if (!info.video) throw new EdgeError("this file has no video track");
+    const nativeFps = info.video.fps || 25;
+    const fps = Math.max(1, Math.min(nativeFps, Number(ctx.params?.fps) || SAMPLE_FPS));
+    ctx.onProgress({ fraction: 0, message: `sampling frames at ${fps} fps (ffmpeg.wasm)` });
+    const { frames, times } = await ops.rgbFrames(ctx, bytes, video.filename, { w: TNV2_W, h: TNV2_H, fps }, (f) =>
+        ctx.onProgress({ fraction: 0.35 * f, message: `sampling frames at ${fps} fps (ffmpeg.wasm)` }),
+    );
+    if (frames.length < 2) throw new EdgeError("the video is too short to split");
+    const duration = Math.max(info.duration, times.at(-1)! + 1 / fps);
+    const { boundaries, method } = await detect(ctx, frames, input.threshold);
+
+    // Key frames on the same (0-based) timeline as the sampled frames.
+    const keyTimes = await ops.keyframeTimes(ctx, bytes, video.filename);
+    const frameDur = 1 / nativeFps;
+    const nearKey = (t: number, tol: number) => keyTimes.find((k) => Math.abs(k - t) <= tol);
+    const cuts: number[] = [];
+    for (const k of boundaries) {
+        throwIfAborted(ctx.signal);
+        const r = await ops.rgbFrames(ctx, bytes, video.filename, { w: TNV2_W, h: TNV2_H, from: times[k - 1]!, to: times[k]! + 1e-3 });
+        let t = r.frames.length >= 2 ? r.times[sharpestCut(r.frames)]! : times[k]!;
+        const key = nearKey(t, frameDur * 1.01);
+        if (key !== undefined) t = key;
+        if (t - (cuts.at(-1) ?? 0) >= MIN_SHOT_S && duration - t >= MIN_SHOT_S) cuts.push(t);
+    }
+    const shots = shotsFrom(cuts, 0, duration);
+    ctx.onProgress({ fraction: 0.65, message: `${shots.length} shots (${method}, ffmpeg.wasm)` });
+
+    const stem = fileStem(video.filename, "video");
+    const pad = String(shots.length).length;
+    if (shots.length === 1) {
+        const ext = /\.([a-z0-9]{1,5})$/i.exec(video.filename ?? "")?.[1]?.toLowerCase() ?? "mp4";
+        return { success: true, video_parts: [{ bytesBase64: video.bytesBase64, mime: video.mime ?? "video/mp4", filename: `${stem}-shot${"1".padStart(pad, "0")}.${ext}` }] };
+    }
+    const parts: Asset[] = [];
+    for (let i = 0; i < shots.length; i++) {
+        const sh = shots[i]!;
+        const onKey = i === 0 || nearKey(sh.start, frameDur * 0.5) !== undefined;
+        const part = await ops.cutPart(ctx, bytes, video.filename, sh.start, sh.end, onKey, !!info.audio);
+        parts.push({ bytesBase64: encodeBase64(part), mime: "video/mp4", filename: `${stem}-shot${String(i + 1).padStart(pad, "0")}.mp4` });
+        ctx.onProgress({ fraction: 0.65 + 0.35 * ((i + 1) / shots.length), message: `shot ${i + 1}/${shots.length} (ffmpeg.wasm)` });
+    }
+    return { success: true, video_parts: parts };
 }

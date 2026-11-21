@@ -1,7 +1,8 @@
 /**
  * tongflow-edge-essentials: browser edge nodes (T0 zero-model nodes, knowledge-base nodes,
  * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, EmbeddingGemma 2, LFM2.5-350M; and the T2 audio nodes:
- * SenseVoiceSmall, Silero VAD, pyannote + CAM++, CED-tiny).
+ * SenseVoiceSmall, Silero VAD, pyannote + CAM++, CED-tiny; and the media nodes on
+ * Mediabunny + WebCodecs with ffmpeg.wasm as fallback / selectable implementation).
  *
  * The default export is `defineEdgePlugin({ methods })`: loaded in a dedicated Web
  * Worker it answers the engine's worker protocol; imported anywhere else (the
@@ -17,7 +18,7 @@ import { detectLanguage } from "./slots/detect-language.js";
 import { embedText } from "./slots/embed-text.js";
 import type { VisionTextInput } from "./slots/image-gen-text.js";
 import { kbWrite } from "./slots/kb-write.js";
-import { extractAudio, getFirstFrame } from "./slots/media.js";
+import { concatVideos, extractAudio, getFirstFrame, getLastFrame, mergeVideoAudio, removeVideoAudio } from "./slots/media.js";
 import { parseDocument } from "./slots/parse-document.js";
 import { renderPages } from "./slots/render-pages.js";
 import { detectObjects, imageOrient, layoutDetect, ocrImage, splitVideo, tableRecognize } from "./slots/vision.js";
@@ -99,8 +100,13 @@ export function withModelAlternative<S extends NodeSlot>(
 export const methods = {
     parseDocument: bind("parse-document", parseDocument),
     renderPages: bind("render-pages", renderPages),
+    // Media: Mediabunny + WebCodecs, ffmpeg.wasm on unsupported files or model "ffmpeg-wasm".
     extractAudio: bind("extract-audio", extractAudio),
     getFirstFrame: bind("get-first-frame", getFirstFrame),
+    getLastFrame: bind("get-last-frame", getLastFrame),
+    concatVideos: bind("concat-videos", concatVideos),
+    removeVideoAudio: bind("remove-video-audio", removeVideoAudio),
+    mergeVideoAudio: bind("merge-video-audio", mergeVideoAudio),
     detectLanguage: bind("detect-language", detectLanguage),
     chunkText: bind("chunk-text", chunkText),
     embedText: bind("embed-text", embedText),
@@ -129,6 +135,10 @@ export const slots = {
     "render-pages": "renderPages",
     "extract-audio": "extractAudio",
     "get-first-frame": "getFirstFrame",
+    "get-last-frame": "getLastFrame",
+    "concat-videos": "concatVideos",
+    "remove-video-audio": "removeVideoAudio",
+    "merge-video-audio": "mergeVideoAudio",
     "detect-language": "detectLanguage",
     "chunk-text": "chunkText",
     "embed-text": "embedText",
@@ -155,6 +165,10 @@ export const impls = {
     renderPages,
     extractAudio,
     getFirstFrame,
+    getLastFrame,
+    concatVideos,
+    removeVideoAudio,
+    mergeVideoAudio,
     detectLanguage,
     chunkText,
     embedText,

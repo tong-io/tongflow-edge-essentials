@@ -585,5 +585,58 @@
         "license": "Apache-2.0",
         "licenseUrl": "https://github.com/Peterande/D-FINE/blob/master/LICENSE",
         "attribution": "D-FINE by Peterande et al. (https://github.com/Peterande/D-FINE/blob/master/LICENSE), ONNX conversion by onnx-community; COCO class names."
+    },
+    {
+        "id": "ffmpeg-wasm",
+        "source": "npm:@ffmpeg/core@0.12.10",
+        "files": [
+            "dist/esm/ffmpeg-core.js",
+            "dist/esm/ffmpeg-core.wasm"
+        ],
+        "checksums": {
+            "dist/esm/ffmpeg-core.js": {
+                "size": 111804,
+                "sha256": "67a48f11645f85439f3fde4f2119042c16b374b910206b7a7a24f342e28dcae3"
+            },
+            "dist/esm/ffmpeg-core.wasm": {
+                "size": 32232419,
+                "sha256": "9f57947a5bd530d8f00c5b3f2cb2a3492faa7e5d823315342d6a8656d0a6b7b7"
+            }
+        },
+        "slots": [
+            "extract-audio",
+            "get-first-frame",
+            "get-last-frame",
+            "concat-videos",
+            "remove-video-audio",
+            "merge-video-audio",
+            "split-video",
+            "transcribe",
+            "vad-segment",
+            "diarize-speakers",
+            "audio-tag"
+        ],
+        "approxMB": 32.3,
+        "license": "GPL-2.0-or-later",
+        "licenseUrl": "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html",
+        "licenseFiles": [
+            "licenses/GPL-2.0.txt",
+            "licenses/ffmpeg-wasm-NOTICE.txt"
+        ],
+        "attribution": "ffmpeg.wasm (@ffmpeg/core 0.12.10) by the ffmpegwasm project, https://github.com/ffmpegwasm/ffmpeg.wasm; FFmpeg n5.1.4 (https://ffmpeg.org) built with --enable-gpl, x264, x265, libvpx, LAME, Ogg, Theora, Opus, Vorbis, zlib, libwebp, FreeType, FriBidi, HarfBuzz, libass, zimg. Unmodified.",
+        "corresponding_source": {
+            "url": "https://github.com/ffmpegwasm/ffmpeg.wasm/tree/71aa99d37c02a7b4c435275ca9ef50e612f6efa1",
+            "repo": "https://github.com/ffmpegwasm/ffmpeg.wasm",
+            "commit": "71aa99d37c02a7b4c435275ca9ef50e612f6efa1",
+            "tag": "v12.15",
+            "ffmpeg": "https://github.com/FFmpeg/FFmpeg/tree/n5.1.4",
+            "notes": "The commit's Dockerfile pins FFmpeg n5.1.4, emscripten/emsdk:3.1.40 and every library branch; see licenses/ffmpeg-wasm-NOTICE.txt."
+        },
+        "upstream": {
+            "url": "https://registry.npmjs.org/@ffmpeg/core/-/core-0.12.10.tgz",
+            "integrity": "sha512-dzNplnn2Nxle2c2i2rrDhqcB19q9cglCkWnoMTDN9Q9l3PvdjZWd1HfSPjCNWc/p8Q3CT+Es9fWOR0UhAeYQZA==",
+            "verified": "2026-11-21: both files are byte-identical in the npm tarball and in node_modules/@ffmpeg/core (devDependency, pinned 0.12.10)"
+        },
+        "notes": "Not a model: the ffmpeg.wasm core (a program), hosted like one. Layout under the model base mirrors the npm package: <modelBase>/npm/@ffmpeg/core@0.12.10/<path>. Single-threaded build (no SharedArrayBuffer / cross-origin isolation needed)."
     }
 ]

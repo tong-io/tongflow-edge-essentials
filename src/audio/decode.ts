@@ -4,9 +4,14 @@
  * `AudioDecoder` for compressed codecs, its own PCM path for WAV/AIFF), the
  * channels are averaged and {@link Resampler} converts the rate. There is no
  * AudioContext in a worker, so nothing here depends on Web Audio.
+ *
+ * A file the browser cannot demux or decode throws {@link MediaUnsupportedError};
+ * {@link decodeAnyAudio} then decodes it with ffmpeg.wasm (AMR, WMA, RealAudio, …).
  */
 import type { EdgeContext } from "../context.js";
-import { EdgeError, throwIfAborted } from "../util/errors.js";
+import { withFfmpegFallback } from "../ffmpeg/select.js";
+import { EdgeError, MediaUnsupportedError, throwIfAborted } from "../util/errors.js";
+import { noTrack } from "../media/no-track.js";
 import { Resampler } from "./resample.js";
 
 export const SAMPLE_RATE = 16000;
@@ -43,9 +48,9 @@ class SampleBuffer {
 }
 
 /**
- * Decode `bytes` to 16 kHz mono. `onFraction` gets 0..1 decode progress.
- * Throws {@link EdgeError} for files without audio or with a codec the browser
- * cannot decode.
+ * Decode `bytes` to 16 kHz mono in the browser. `onFraction` gets 0..1 decode progress.
+ * Throws {@link EdgeError} for files without audio and {@link MediaUnsupportedError}
+ * for files or codecs the browser cannot handle.
  */
 export async function decodeAudio(
     bytes: Uint8Array,
@@ -59,11 +64,11 @@ export async function decodeAudio(
         try {
             track = await input.getPrimaryAudioTrack();
         } catch (e) {
-            throw new EdgeError(`unsupported or damaged media file (${e instanceof Error ? e.message : String(e)})`);
+            throw new MediaUnsupportedError(`unsupported or damaged media file (${e instanceof Error ? e.message : String(e)})`);
         }
-        if (!track) throw new EdgeError("this file has no audio track");
+        if (!track) throw await noTrack(input, "audio");
         if (!(await track.canDecode())) {
-            throw new EdgeError(`this browser cannot decode ${track.codec ?? "this"} audio`);
+            throw new MediaUnsupportedError(`this browser cannot decode ${track.codec ?? "this"} audio`);
         }
         const duration = await track.computeDuration().catch(() => 0);
         const out = new SampleBuffer(Math.ceil((duration || 1) * SAMPLE_RATE) + SAMPLE_RATE);
@@ -113,4 +118,28 @@ export async function decodeAudio(
     } finally {
         input.dispose();
     }
+}
+
+/**
+ * {@link decodeAudio}, falling back to ffmpeg.wasm (or forced to it with `force`, the
+ * node's `<model>+ffmpeg-wasm`) for files the browser cannot decode.
+ */
+export async function decodeAnyAudio(
+    bytes: Uint8Array,
+    ctx: EdgeContext,
+    onFraction?: (f: number) => void,
+    opts: { filename?: string; force?: boolean } = {},
+): Promise<DecodedAudio> {
+    return withFfmpegFallback(
+        ctx,
+        "decoding audio",
+        () => decodeAudio(bytes, ctx, onFraction),
+        async () => {
+            const ops = await import("../ffmpeg/ops.js");
+            const { samples, codec } = await ops.decodePcm(ctx, bytes, opts.filename, SAMPLE_RATE, onFraction);
+            onFraction?.(1);
+            return { samples, sampleRate: SAMPLE_RATE, duration: samples.length / SAMPLE_RATE, codec };
+        },
+        opts.force,
+    );
 }

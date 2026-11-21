@@ -1,6 +1,6 @@
 /**
  * The T2 audio slot bodies (lazy chunk: loaded on the first audio node, so
- * the entry stays small). Every slot decodes its input with {@link decodeAudio}
+ * the entry stays small). Every slot decodes its input with {@link decodeAnyAudio}
  * to 16 kHz mono first; models are fetched from the model base on first use
  * and stay loaded in the worker for later nodes.
  */
@@ -9,7 +9,8 @@ import type { Asset } from "../types.js";
 import { encodeBase64 } from "../util/base64.js";
 import { EdgeError } from "../util/errors.js";
 import { fileStem } from "../util/text.js";
-import { decodeAudio, type DecodedAudio, SAMPLE_RATE } from "./decode.js";
+import { decodeAnyAudio, type DecodedAudio, SAMPLE_RATE } from "./decode.js";
+import { FFMPEG_SUFFIX, forcesFfmpeg } from "../ffmpeg/select.js";
 import { diarize, type DiarizeOptions } from "./diarize.js";
 import { SenseVoice, senseVoiceLanguage } from "./sensevoice.js";
 import { tagAudio } from "./tagging.js";
@@ -17,17 +18,21 @@ import { detectSpeech, loadVad, mergeSpans, VAD_DEFAULTS, type VadOptions } from
 import { encodeWav } from "./wav.js";
 import { checkpoint } from "./checkpoint.js";
 
-/** Model ids as listed in tongflow.plugin.json `slots[].models` (first = default). */
+/**
+ * Model ids as listed in tongflow.plugin.json `slots[].models` (first = default).
+ * `<model>+ffmpeg-wasm` is the same model with the input decoded by ffmpeg.wasm
+ * instead of WebCodecs ("换实现"); the default falls back to ffmpeg by itself.
+ */
 export const SLOT_MODELS = {
-    transcribe: ["sensevoice-small"],
-    "vad-segment": ["silero-vad-v5"],
-    "diarize-speakers": ["pyannote-campplus-zh"],
-    "audio-tag": ["ced-tiny"],
+    transcribe: ["sensevoice-small", `sensevoice-small${FFMPEG_SUFFIX}`],
+    "vad-segment": ["silero-vad-v5", `silero-vad-v5${FFMPEG_SUFFIX}`],
+    "diarize-speakers": ["pyannote-campplus-zh", `pyannote-campplus-zh${FFMPEG_SUFFIX}`],
+    "audio-tag": ["ced-tiny", `ced-tiny${FFMPEG_SUFFIX}`],
 } as const;
 
 function checkModel(ctx: EdgeContext, slot: keyof typeof SLOT_MODELS): void {
     const allowed: readonly string[] = SLOT_MODELS[slot];
-    if (ctx.model && !allowed.includes(ctx.model)) {
+    if (ctx.model && !allowed.includes(ctx.model) && ctx.model !== "ffmpeg-wasm") {
         throw new EdgeError(`unknown model "${ctx.model}" for ${slot}; available: ${allowed.join(", ")}`);
     }
 }
@@ -38,8 +43,8 @@ function stage(ctx: EdgeContext, from: number, to: number, message: string) {
     return (f: number, msg?: string) => ctx.onProgress({ fraction: from + (to - from) * f, message: msg ?? message });
 }
 
-async function decode(ctx: EdgeContext, bytes: Uint8Array, to = 0.1): Promise<DecodedAudio> {
-    return decodeAudio(bytes, ctx, stage(ctx, 0, to, "decoding audio"));
+async function decode(ctx: EdgeContext, bytes: Uint8Array, filename?: string, to = 0.1): Promise<DecodedAudio> {
+    return decodeAnyAudio(bytes, ctx, stage(ctx, 0, to, "decoding audio"), { filename, force: forcesFfmpeg(ctx.model) });
 }
 
 function num(v: unknown): number | undefined {
@@ -88,9 +93,9 @@ export function joinTranscript(parts: string[]): string {
     return out;
 }
 
-export async function transcribe(bytes: Uint8Array, language: string | undefined, ctx: EdgeContext): Promise<string> {
+export async function transcribe(bytes: Uint8Array, language: string | undefined, ctx: EdgeContext, filename?: string): Promise<string> {
     checkModel(ctx, "transcribe");
-    const audio = await decode(ctx, bytes);
+    const audio = await decode(ctx, bytes, filename);
     const lang = senseVoiceLanguage(language);
     ctx.onProgress({ fraction: 0.1, message: "loading SenseVoice" });
     if (audio.duration <= ONE_PASS_S) {
@@ -122,7 +127,7 @@ export async function transcribe(bytes: Uint8Array, language: string | undefined
 
 export async function vadSegment(bytes: Uint8Array, filename: string | undefined, ctx: EdgeContext): Promise<Asset[]> {
     checkModel(ctx, "vad-segment");
-    const audio = await decode(ctx, bytes);
+    const audio = await decode(ctx, bytes, filename);
     const spans = await detectSpeech(audio.samples, ctx, { ...VAD_DEFAULTS, ...vadParams(ctx.params ?? {}) }, stage(ctx, 0.1, 0.9, "finding speech"));
     const stem = fileStem(filename, "audio");
     const out = spans.map((s, i) => ({
@@ -134,9 +139,9 @@ export async function vadSegment(bytes: Uint8Array, filename: string | undefined
     return out;
 }
 
-export async function diarizeSpeakers(bytes: Uint8Array, ctx: EdgeContext): Promise<string> {
+export async function diarizeSpeakers(bytes: Uint8Array, ctx: EdgeContext, filename?: string): Promise<string> {
     checkModel(ctx, "diarize-speakers");
-    const audio = await decode(ctx, bytes);
+    const audio = await decode(ctx, bytes, filename);
     const o: DiarizeOptions = {};
     const k = num(ctx.params?.num_speakers);
     if (k !== undefined && k >= 1) o.numSpeakers = Math.round(k);
@@ -148,9 +153,9 @@ export async function diarizeSpeakers(bytes: Uint8Array, ctx: EdgeContext): Prom
     return JSON.stringify(segments);
 }
 
-export async function audioTag(bytes: Uint8Array, ctx: EdgeContext): Promise<string> {
+export async function audioTag(bytes: Uint8Array, ctx: EdgeContext, filename?: string): Promise<string> {
     checkModel(ctx, "audio-tag");
-    const audio = await decode(ctx, bytes);
+    const audio = await decode(ctx, bytes, filename);
     ctx.onProgress({ fraction: 0.1, message: "loading CED" });
     const o: { topK?: number; minScore?: number } = {};
     const k = num(ctx.params?.top_k);

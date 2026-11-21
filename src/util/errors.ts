@@ -20,3 +20,15 @@ export function throwIfAborted(signal: AbortSignal): void {
 
 /** Host cap from ADR-0001: a single file is at most 100 MB. */
 export const MAX_ASSET_BYTES = 100 * 1024 * 1024;
+
+/**
+ * The browser path (Mediabunny demuxing, WebCodecs decoding) cannot handle this file:
+ * an unknown container, a codec `isConfigSupported` rejects, or a decoder that throws.
+ * Media slots answer it by retrying with ffmpeg.wasm (see `ffmpeg/select.ts`).
+ */
+export class MediaUnsupportedError extends EdgeError {
+    constructor(message: string) {
+        super(message);
+        this.name = "MediaUnsupportedError";
+    }
+}
