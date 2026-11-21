@@ -1,6 +1,7 @@
 /**
  * tongflow-edge-essentials: browser edge nodes (T0 zero-model nodes, knowledge-base nodes,
- * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, EmbeddingGemma 2, LFM2.5-350M).
+ * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, EmbeddingGemma 2, LFM2.5-350M; and the T2 audio nodes:
+ * SenseVoiceSmall, Silero VAD, pyannote + CAM++, CED-tiny).
  *
  * The default export is `defineEdgePlugin({ methods })`: loaded in a dedicated Web
  * Worker it answers the engine's worker protocol; imported anywhere else (the
@@ -11,6 +12,7 @@
 import { defineEdgePlugin, edgeMethod, type EdgeMethodContext } from "tongflow/engine/worker";
 import { type EdgeContext, toEdgeContext } from "./context.js";
 import { chunkText } from "./slots/chunk-text.js";
+import { audioTag, diarizeSpeakers, transcribe, vadSegment } from "./slots/audio.js";
 import { detectLanguage } from "./slots/detect-language.js";
 import { embedText } from "./slots/embed-text.js";
 import type { VisionTextInput } from "./slots/image-gen-text.js";
@@ -19,7 +21,7 @@ import { extractAudio, getFirstFrame } from "./slots/media.js";
 import { parseDocument } from "./slots/parse-document.js";
 import { renderPages } from "./slots/render-pages.js";
 import type { EdgeSlotOutput, NodeSlot, SlotImpl, SlotInput } from "./types.js";
-import { applyEntryConfig } from "./util/model-base.js";
+import { applyEntryConfig, type EdgeConfig } from "./util/model-base.js";
 
 export type { EdgeContext } from "./context.js";
 export { toEdgeContext } from "./context.js";
@@ -35,9 +37,28 @@ export { T3_MODELS, hostedFiles } from "./ml/catalog.js";
 /** `dist/` when bundled: assets are served beside the entry (`dist/assets/…`). */
 const ASSET_BASE = new URL("./", import.meta.url);
 
-
 function bind<S extends NodeSlot>(slot: S, impl: SlotImpl<S>) {
-    return edgeMethod(slot, (input: SlotInput<S>, ctx: EdgeMethodContext) => impl(input, toEdgeContext(ctx, ASSET_BASE)));
+    return edgeMethod(slot, (input: SlotInput<S>, ctx: EdgeMethodContext) =>
+        impl(input, toEdgeContext(ctx, ASSET_BASE)),
+    );
+}
+
+/**
+ * Host configuration inside the worker: the host may post
+ * `{type: "config", modelBase: "https://…/models/"}` before its first invoke
+ * (the engine protocol ignores unknown message types). It lands in
+ * `globalThis.__TONGFLOW_EDGE_CONFIG__`, which a host that imports the plugin
+ * in-process can also set directly.
+ */
+const scope = globalThis as unknown as { addEventListener?: (t: string, l: (e: MessageEvent) => void) => void };
+if (typeof (globalThis as { DedicatedWorkerGlobalScope?: unknown }).DedicatedWorkerGlobalScope === "function") {
+    scope.addEventListener?.("message", (e: MessageEvent) => {
+        const msg = e.data as ({ type?: unknown } & EdgeConfig) | null;
+        if (msg?.type !== "config") return;
+        const cfg: EdgeConfig = { ...globalThis.__TONGFLOW_EDGE_CONFIG__ };
+        if (typeof msg.modelBase === "string" && msg.modelBase) cfg.modelBase = msg.modelBase;
+        globalThis.__TONGFLOW_EDGE_CONFIG__ = cfg;
+    });
 }
 
 /**
@@ -88,6 +109,10 @@ export const methods = {
     ocrImageGlm: bind("ocr-image", t3.ocrImageGlm),
     embedImage: bind("embed-image", t3.embedImage),
     genText: bind("gen-text", t3.genText),
+    transcribe: bind("transcribe", transcribe),
+    vadSegment: bind("vad-segment", vadSegment),
+    diarizeSpeakers: bind("diarize-speakers", diarizeSpeakers),
+    audioTag: bind("audio-tag", audioTag),
 };
 
 /** Slot → method name, mirroring the manifest (kept in sync by a test). */
@@ -105,9 +130,27 @@ export const slots = {
     "embed-image": "embedImage",
     "gen-text": "genText",
     "ocr-image": "ocrImageGlm",
+    transcribe: "transcribe",
+    "vad-segment": "vadSegment",
+    "diarize-speakers": "diarizeSpeakers",
+    "audio-tag": "audioTag",
 } as const satisfies Partial<Record<NodeSlot, keyof typeof methods>>;
 
 /** The slot implementations against the internal context (for hosts and tests that bring their own). */
-export const impls = { parseDocument, renderPages, extractAudio, getFirstFrame, detectLanguage, chunkText, embedText, kbWrite, ...t3 };
+export const impls = {
+    parseDocument,
+    renderPages,
+    extractAudio,
+    getFirstFrame,
+    detectLanguage,
+    chunkText,
+    embedText,
+    kbWrite,
+    ...t3,
+    transcribe,
+    vadSegment,
+    diarizeSpeakers,
+    audioTag,
+};
 
 export default defineEdgePlugin({ methods });

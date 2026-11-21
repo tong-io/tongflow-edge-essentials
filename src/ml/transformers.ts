@@ -40,8 +40,23 @@ async function openCache(): Promise<Cache | undefined> {
     }
 }
 
-/** Fetch the ort wasm once (Cache API first), with progress, and hand it to onnxruntime-web. */
-async function loadOrtWasm(tf: Transformers, rt: MlRuntime): Promise<void> {
+/** The `env.wasm` flags object of onnxruntime-web (shared by transformers.js and direct ort users). */
+type OrtWasmEnv = { wasmBinary?: ArrayBufferLike | Uint8Array };
+
+/**
+ * Fetch the ort wasm once per worker (Cache API first), with progress, and hand it to
+ * onnxruntime-web. Shared by transformers.js and the nodes that run onnxruntime-web
+ * directly (the audio models), so the 29 MB binary is fetched and instantiated once.
+ */
+export function ensureOrtWasm(wasm: OrtWasmEnv, rt: MlRuntime): Promise<void> {
+    wasmPromise ??= loadOrtWasm(wasm, rt);
+    wasmPromise.catch(() => {
+        wasmPromise = undefined;
+    });
+    return wasmPromise;
+}
+
+async function loadOrtWasm(wasm: OrtWasmEnv, rt: MlRuntime): Promise<void> {
     const url = rt.ortBase + ORT_WASM_FILE;
     const label = `onnxruntime-web/${ORT_WASM_FILE}`;
     const cache = await openCache();
@@ -82,7 +97,6 @@ async function loadOrtWasm(tf: Transformers, rt: MlRuntime): Promise<void> {
             // quota: run without caching
         }
     }
-    const wasm = tf.env.backends.onnx.wasm!;
     wasm.wasmBinary = bytes;
 }
 
@@ -113,13 +127,7 @@ export async function loadTransformers(rt: MlRuntime): Promise<Transformers> {
     }
     // Without cross-origin isolation there is no SharedArrayBuffer: ort runs single-threaded.
     if (!(globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated) wasm.numThreads = 1;
-    wasmPromise ??= loadOrtWasm(tf, rt);
-    try {
-        await wasmPromise;
-    } catch (e) {
-        wasmPromise = undefined;
-        throw e;
-    }
+    await ensureOrtWasm(wasm, rt);
     return tf;
 }
 

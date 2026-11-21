@@ -123,5 +123,142 @@
         "approxMB": 259,
         "license": "LFM Open License v1.0",
         "attribution": "LFM2.5-350M by Liquid AI, Inc., licensed under the LFM Open License v1.0"
+    },
+    {
+        "id": "sensevoice-small-int8",
+        "source": "modelscope:pengzhendong/sherpa-onnx-sense-voice-zh-en-ja-ko-yue",
+        "files": [
+            "model.int8.onnx",
+            "tokens.txt"
+        ],
+        "checksums": {
+            "model.int8.onnx": {
+                "size": 239233841,
+                "sha256": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51"
+            },
+            "tokens.txt": {
+                "size": 315894,
+                "sha256": "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"
+            }
+        },
+        "slots": [
+            "transcribe"
+        ],
+        "approxMB": 240,
+        "license": "FunASR Model License v1.1",
+        "licenseUrl": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",
+        "attribution": "SenseVoiceSmall by FunASR/FunAudioLLM (model card: https://www.modelscope.cn/models/iic/SenseVoiceSmall). int8 ONNX export by k2-fsa/sherpa-onnx (modified: converted to ONNX and quantized).",
+        "upstream": {
+            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+            "sha256": "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e",
+            "verified": "2026-11-21: the archive matches GitHub's digest; model.int8.onnx, tokens.txt and LICENSE inside it are byte-identical (SHA-256) to the ModelScope mirror"
+        },
+        "notes": "Mirror by pengzhendong (k2-fsa/WeNet contributor). ModelScope's iic/SenseVoiceSmall metadata says Apache-2.0, but the official README defers to the FunASR model license; attribution is mandatory and comparisons must stay factual. Commercial use is still open in QwenAudio/SenseVoice#334: re-check before launch, fall back to X-ASR (Apache-2.0) if needed."
+    },
+    {
+        "id": "silero-vad-v5",
+        "source": "modelscope:pengzhendong/silero-vad",
+        "files": [
+            "v5/silero_vad.onnx"
+        ],
+        "checksums": {
+            "v5/silero_vad.onnx": {
+                "size": 2327524,
+                "sha256": "2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f"
+            }
+        },
+        "slots": [
+            "vad-segment",
+            "transcribe"
+        ],
+        "approxMB": 2.3,
+        "license": "MIT",
+        "licenseUrl": "https://github.com/snakers4/silero-vad/blob/master/LICENSE",
+        "attribution": "Silero VAD v5 by Silero Team (snakers4/silero-vad), MIT.",
+        "upstream": {
+            "url": "https://raw.githubusercontent.com/snakers4/silero-vad/v5.1.2/src/silero_vad/data/silero_vad.onnx",
+            "sha256": "2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f",
+            "verified": "2026-11-21: byte-identical to the official v5.1 / v5.1.2 release file"
+        },
+        "notes": "transcribe loads it only for audio longer than 30 s."
+    },
+    {
+        "id": "pyannote-segmentation-3.0",
+        "source": "modelscope:pengzhendong/sherpa-onnx-pyannote-segmentation-3-0",
+        "files": [
+            "model.onnx"
+        ],
+        "checksums": {
+            "model.onnx": {
+                "size": 5992913,
+                "sha256": "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079"
+            }
+        },
+        "slots": [
+            "diarize-speakers"
+        ],
+        "approxMB": 6,
+        "license": "MIT",
+        "licenseUrl": "https://huggingface.co/pyannote/segmentation-3.0/blob/main/LICENSE",
+        "attribution": "pyannote/segmentation-3.0 by Hervé Bredin and the pyannote.audio contributors, MIT. ONNX export by k2-fsa/sherpa-onnx.",
+        "upstream": {
+            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+            "verified": "2026-11-21: model.onnx and LICENSE inside the archive are byte-identical (SHA-256) to the ModelScope mirror"
+        }
+    },
+    {
+        "id": "3dspeaker-campplus-zh-cn-16k",
+        "source": "modelscope:lihuoo/3dspeaker-recognition-models",
+        "files": [
+            "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"
+        ],
+        "checksums": {
+            "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx": {
+                "size": 28281138,
+                "sha256": "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11"
+            }
+        },
+        "slots": [
+            "diarize-speakers"
+        ],
+        "approxMB": 28.3,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/modelscope/3D-Speaker/blob/main/LICENSE",
+        "attribution": "CAM++ speaker embedding (iic/speech_campplus_sv_zh-cn_16k-common) by 3D-Speaker / Alibaba Tongyi Lab, Apache-2.0. ONNX export by k2-fsa/sherpa-onnx (modified: converted to ONNX).",
+        "upstream": {
+            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",
+            "sha256": "e6af4d4c444f3dab01d991bb9b7d5af98eb979e329f6c8880a19d5553561ed25",
+            "verified": "2026-11-21: NOT byte-identical. The GitHub asset has since been re-exported (producer PyTorch 2.14.1 instead of 2.4.1; AveragePool count_include_pad 0 instead of 1, with zero pads). Weights and every other node are identical, and both files give the same embeddings (max abs difference 0.0 on random inputs of 97–999 frames). No byte-identical ModelScope mirror of the current GitHub file was found."
+        }
+    },
+    {
+        "id": "ced-tiny-int8",
+        "source": "modelscope:k2-fsa/sherpa-onnx-ced-tiny-audio-tagging-2024-04-19",
+        "files": [
+            "model.int8.onnx",
+            "class_labels_indices.csv"
+        ],
+        "checksums": {
+            "model.int8.onnx": {
+                "size": 6133417,
+                "sha256": "73aa22e783115f6a4ae169b36089907e07d0fd44795595eddea9c1bfc74cc945"
+            },
+            "class_labels_indices.csv": {
+                "size": 14675,
+                "sha256": "cdd1049833c4b86127c2773ac0d14a2754b6a6d0d1798002ed5c66e699708429"
+            }
+        },
+        "slots": [
+            "audio-tag"
+        ],
+        "approxMB": 6.2,
+        "license": "CC-BY-4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+        "attribution": "CED-tiny by Heinrich Dinkel, Yongqing Wang, Zhiyong Yan, Junbo Zhang and Yujun Wang (Xiaomi), https://github.com/RicherMans/CED; weights CC BY 4.0 (https://zenodo.org/record/8275347). Modified: converted to ONNX and int8-quantized by k2-fsa/sherpa-onnx. AudioSet class labels from Google AudioSet (CC BY 4.0).",
+        "upstream": {
+            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/audio-tagging-models/sherpa-onnx-ced-tiny-audio-tagging-2024-04-19.tar.bz2",
+            "verified": "2026-11-21: model.int8.onnx and class_labels_indices.csv inside the archive are byte-identical (SHA-256) to the ModelScope repo (k2-fsa's own ModelScope organization)"
+        },
+        "notes": "Only the weights are used. The CED training code (RicherMans/CED) is GPL-3.0 and is not bundled; the front end here is a port of sherpa-onnx (Apache-2.0)."
     }
 ]

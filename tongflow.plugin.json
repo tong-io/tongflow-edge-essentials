@@ -1,7 +1,7 @@
 {
     "plugin": {
         "name": "Edge essentials",
-        "description": "On-device document parsing, PDF page rendering, audio/first-frame extraction, language detection, and knowledge-base chunking and embedding in the browser, plus optional WebGPU nodes: image understanding (Qwen3.5-0.8B), GLM-OCR, image embeddings (EmbeddingGemma 2) and key-point extraction (LFM2.5-350M). Files never leave the device."
+        "description": "On-device document parsing, PDF page rendering, audio/first-frame extraction, language detection, knowledge-base chunking and embedding, and audio models (transcription, speech segmentation, speaker diarization, audio event tagging) in the browser, plus optional WebGPU nodes: image understanding (Qwen3.5-0.8B), GLM-OCR, image embeddings (EmbeddingGemma 2) and key-point extraction (LFM2.5-350M). Files never leave the device."
     },
     "runtime": "browser",
     "entry": "dist/index.js",
@@ -18,6 +18,10 @@
         { "nodeSlot": "image-describe", "method": "imageGenText", "models": ["qwen3.5-0.8b"] },
         { "nodeSlot": "embed-image", "method": "embedImage", "models": ["embeddinggemma-2"] },
         { "nodeSlot": "gen-text", "method": "genText", "models": ["lfm2.5-350m"] },
-        { "nodeSlot": "ocr-image", "method": "ocrImageGlm", "models": ["glm-ocr"] }
+        { "nodeSlot": "ocr-image", "method": "ocrImageGlm", "models": ["glm-ocr"] },
+        { "nodeSlot": "transcribe", "method": "transcribe", "models": ["sensevoice-small"] },
+        { "nodeSlot": "vad-segment", "method": "vadSegment", "models": ["silero-vad-v5"] },
+        { "nodeSlot": "diarize-speakers", "method": "diarizeSpeakers", "models": ["pyannote-campplus-zh"] },
+        { "nodeSlot": "audio-tag", "method": "audioTag", "models": ["ced-tiny"] }
     ]
 }
