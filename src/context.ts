@@ -1,4 +1,5 @@
 import type { EdgeMethodContext } from "tongflow/engine/worker";
+import { resolveModelBase } from "./util/model-base.js";
 
 /**
  * The plugin's internal context, built from the engine's {@link EdgeMethodContext}
@@ -10,8 +11,15 @@ export interface EdgeContext {
     signal: AbortSignal;
     /** Live status for the node: a 0..1 fraction and/or a short message. */
     onProgress(p: { fraction?: number; message?: string }): void;
-    /** Byte progress while a lazily loaded asset (wasm, data) is downloaded. */
-    onDownload(p: { loaded: number; total?: number; label: string }): void;
+    /** Byte progress while a lazily loaded asset (wasm, data, model weights) is downloaded. */
+    onDownload(p: { loaded: number; total?: number; label: string; model?: string }): void;
+    /** The node's chosen model (manifest `models`), when the host set one; absent = the slot's default. */
+    model?: string;
+    /**
+     * Absolute URL (ending in `/`) that model files are fetched from:
+     * `<modelBase><org>/<repo>/<path>`. See `util/model-base.ts`.
+     */
+    modelBase: string;
     /**
      * Map a plugin-relative asset path (for example `assets/xberg/xberg_wasm_bg.wasm`)
      * to a same-origin URL the worker can fetch. Directory paths end with `/`.
@@ -33,9 +41,11 @@ export function toEdgeContext(ctx: EdgeMethodContext, assetBase: string | URL): 
             const percent = fraction === undefined ? undefined : Math.max(0, Math.min(100, Math.round(fraction * 100)));
             ctx.progress(message ?? lastMessage, percent);
         },
-        onDownload({ loaded, total, label }) {
-            ctx.modelDownload({ loaded, ...(total !== undefined ? { total } : {}), file: label });
+        onDownload({ loaded, total, label, model }) {
+            ctx.modelDownload({ loaded, ...(total !== undefined ? { total } : {}), file: label, ...(model ? { model } : {}) });
         },
+        ...(ctx.model ? { model: ctx.model } : {}),
+        modelBase: resolveModelBase((ctx as { modelBase?: string }).modelBase, assetBase),
         resolveAsset: (relPath) => new URL(relPath, assetBase).href,
     };
 }
