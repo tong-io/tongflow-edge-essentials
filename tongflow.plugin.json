@@ -27,6 +27,6 @@
         { "nodeSlot": "layout-detect", "method": "layoutDetect", "models": ["pp-doclayout-s", "pp-doclayout-m"] },
         { "nodeSlot": "table-recognize", "method": "tableRecognize", "models": ["slanet-plus"] },
         { "nodeSlot": "split-video", "method": "splitVideo", "models": ["transnetv2"] },
-        { "nodeSlot": "detect-objects", "method": "detectObjects", "models": ["dfine-nano", "dfine-nano-fp16"] }
+        { "nodeSlot": "detect-objects", "method": "detectObjects", "models": ["dfine-nano-fp16", "dfine-nano"] }
     ]
 }

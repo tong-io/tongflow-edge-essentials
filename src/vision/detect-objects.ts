@@ -1,5 +1,5 @@
 /**
- * `detect-objects`: D-FINE nano (COCO, int8) through transformers.js's object-detection
+ * `detect-objects`: D-FINE nano (COCO; fp16 by default, int8 as the smaller alternative) through transformers.js's object-detection
  * pipeline, loaded with the plugin's shared transformers.js setup (`ml/transformers.ts`:
  * model files from `<modelBase>onnx-community/dfine_n_coco-ONNX/…`, ort wasm from the
  * plugin's own assets, Cache API, download progress).
@@ -14,8 +14,12 @@ import { downloadReporter, loadTransformers } from "../ml/transformers.js";
 import { EdgeError } from "../util/errors.js";
 import { type Box, iou } from "./geometry.js";
 
-/** Manifest model ids, default first: the int8 export, or fp16 (2× faster on WASM in our runs, 7.9 MB). */
-export const DETECT_MODELS = ["dfine-nano", "dfine-nano-fp16"] as const;
+/**
+ * Manifest model ids, default first: the fp16 export (7.9 MB), or int8 (4.5 MB). fp16 is the
+ * default: on WASM it was both faster and more accurate in our runs, while int8 missed obvious
+ * objects (the person in astronaut.jpg). The ids stay as they were (`dfine-nano` is int8).
+ */
+export const DETECT_MODELS = ["dfine-nano-fp16", "dfine-nano"] as const;
 type DetectModel = (typeof DETECT_MODELS)[number];
 const DTYPE: Record<DetectModel, string> = { "dfine-nano": "int8", "dfine-nano-fp16": "fp16" };
 /** D-FINE nano's sigmoid scores are modest (a clear cat scores ~0.6), so the cut is lower than DETR's usual 0.5. */

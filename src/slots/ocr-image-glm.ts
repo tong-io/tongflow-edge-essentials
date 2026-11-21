@@ -14,7 +14,7 @@ import { GLM_OCR, pickModel, variantFor } from "../ml/catalog.js";
 import { generateText } from "../ml/generate.js";
 import { decodeImage } from "../ml/image.js";
 import { GLM_OCR_PROMPT, cleanOcrText, intParam } from "../ml/prompts.js";
-import { withModel } from "../ml/runtime.js";
+import { modelConfig, withModel } from "../ml/runtime.js";
 import { GLM_OCR_BUDGET, smartResize, withMaxPixels } from "../ml/sizing.js";
 import { requireWebGPU } from "../ml/webgpu.js";
 import type { EdgeSlotOutput, SlotInput } from "../types.js";
@@ -49,6 +49,7 @@ export async function ocrImageGlm(input: SlotInput<"ocr-image">, ctx: EdgeContex
                 load: async (tf, progress_callback) => {
                     const processor = await tf.AutoProcessor.from_pretrained(model.repo, { progress_callback });
                     const m = await tf.GlmOcrForConditionalGeneration.from_pretrained(model.repo, {
+                        config: await modelConfig(tf, model, variant, progress_callback),
                         dtype: variant.dtype,
                         device: "webgpu",
                         progress_callback,
