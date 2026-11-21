@@ -1,7 +1,20 @@
 // T3 (WebGPU) nodes: everything that runs without a GPU or a model.
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
-import { T3_MODELS, hostedFiles, onnxFiles, pickModel, variantFor, GLM_OCR, LFM25_350M, QWEN35_VL } from "../../src/ml/catalog.js";
+import {
+    T3_MODELS,
+    externalDataFormat,
+    hostedFiles,
+    onnxFiles,
+    pickModel,
+    variantFor,
+    withExternalData,
+    EMBEDDING_GEMMA_2,
+    GLM_OCR,
+    LFM25_350M,
+    QWEN35_VL,
+} from "../../src/ml/catalog.js";
+import { CHAINS, unpoisonedOrtChains } from "../../tsdown.config.js";
 import { repoUrl } from "../../src/ml/runtime.js";
 import {
     DESCRIBE_PROMPT_ZH,
@@ -62,6 +75,52 @@ describe("model catalog and models.json", () => {
         ]);
         expect(onnxFiles({ dtype: { model: "q8" }, approxMB: 1 })).toEqual(["onnx/model_quantized.onnx", "onnx/model_quantized.onnx_data"]);
         expect(onnxFiles({ dtype: { model: "fp32" }, approxMB: 1 })).toEqual(["onnx/model.onnx", "onnx/model.onnx_data"]);
+    });
+
+    it("declares one external-data file per graph, by its full file name", () => {
+        expect(externalDataFormat(GLM_OCR.f16)).toEqual({
+            "embed_tokens_q4f16.onnx": 1,
+            "vision_encoder_q4f16.onnx": 1,
+            "decoder_model_merged_q4f16.onnx": 1,
+        });
+        expect(externalDataFormat(EMBEDDING_GEMMA_2.fallback)).toEqual({ "model_q4.onnx": 1, "vision_encoder_q4.onnx": 1 });
+        // every graph externalDataFormat names has its .onnx_data in onnxFiles (what the host mirrors)
+        for (const m of T3_MODELS) {
+            for (const v of [m.f16, m.fallback]) {
+                for (const g of Object.keys(externalDataFormat(v))) expect(onnxFiles(v)).toContain(`onnx/${g}_data`);
+            }
+        }
+    });
+
+    it("adds the variant's graphs to a config whose map names other files (GLM-OCR's config.json)", () => {
+        // GLM-OCR-ONNX/config.json as published: fp32 names only, which transformers.js
+        // 4.3.2 matches neither against `embed_tokens_q4f16.onnx` nor against `embed_tokens`.
+        const glm = {
+            "transformers.js_config": {
+                use_external_data_format: { "vision_encoder.onnx": 1, "decoder_model_merged.onnx": 2, "embed_tokens.onnx": 1 },
+                kv_cache_dtype: { q4f16: "float16" },
+            },
+        };
+        const out = withExternalData(glm, GLM_OCR.f16);
+        expect(out).toBe(glm);
+        expect(out["transformers.js_config"]).toEqual({
+            use_external_data_format: {
+                "vision_encoder.onnx": 1,
+                "decoder_model_merged.onnx": 2,
+                "embed_tokens.onnx": 1,
+                "embed_tokens_q4f16.onnx": 1,
+                "vision_encoder_q4f16.onnx": 1,
+                "decoder_model_merged_q4f16.onnx": 1,
+            },
+            kv_cache_dtype: { q4f16: "float16" },
+        });
+        // no transformers.js_config at all
+        expect(withExternalData({} as Record<string, unknown>, LFM25_350M.f16)).toEqual({
+            "transformers.js_config": { use_external_data_format: { "model_q4f16.onnx": 1 } },
+        });
+        // `true` (LFM2.5's config) already covers every graph
+        const lfm = { "transformers.js_config": { use_external_data_format: true } };
+        expect(withExternalData(lfm, LFM25_350M.f16)["transformers.js_config"].use_external_data_format).toBe(true);
     });
 
     it.each(T3_MODELS.map((m) => [m.id, m] as const))("models.json lists everything %s needs", (_id, model) => {
@@ -326,5 +385,34 @@ describe("WebGPU and storage checks", () => {
         expect(() => checkQuota(800, {}, "x")).not.toThrow();
         expect(describeQuota({ quota: 2e9, usage: 5e8 })).toBe("1500 MB free of 2000 MB storage");
         expect(describeQuota({})).toBe("");
+    });
+});
+
+describe("bundle patch: transformers.js session chains", () => {
+    const src = readFileSync(new URL("node_modules/@huggingface/transformers/dist/transformers.web.js", root), "utf8");
+    const id = "/x/node_modules/@huggingface/transformers/dist/transformers.web.js";
+    const transform = unpoisonedOrtChains.transform.bind(unpoisonedOrtChains);
+
+    it("rewrites both chains of the pinned transformers.js so a rejected link does not poison the next", () => {
+        const out = transform(src, id)!;
+        for (const [from, to] of CHAINS) {
+            expect(src).toContain(from);
+            expect(out).not.toContain(from);
+            expect(out).toContain(to);
+        }
+    });
+
+    it("fails the build when the pattern is gone (another transformers.js version)", () => {
+        expect(() => transform("var webInitChain = Promise.resolve();", id)).toThrow(/not found/);
+        expect(transform("x", "/x/node_modules/other/index.js")).toBeNull();
+    });
+
+    it("the patched chain runs the next link after a rejected one", async () => {
+        let chain: Promise<unknown> = Promise.resolve();
+        const link = (fn: () => Promise<unknown>) => (chain = chain.catch(() => {}).then(fn));
+        const first = link(() => Promise.reject(new Error("first model failed")));
+        const second = link(() => Promise.resolve("second model loaded"));
+        await expect(first).rejects.toThrow("first model failed");
+        await expect(second).resolves.toBe("second model loaded");
     });
 });

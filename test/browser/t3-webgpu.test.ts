@@ -250,6 +250,39 @@ describe.runIf(MODELS)("T3 nodes with real models from EDGE_MODELS_DIR (WebGPU)"
     );
 
     it(
+        "a model that fails to build its session does not break the next model in the same worker",
+        async (ctx) => {
+            const broken = "onnx-community/embeddinggemma-2-ONNX";
+            if (!(await hasModel(broken)) || !(await hasModel("onnx-community/GLM-OCR-ONNX"))) ctx.skip("needs EmbeddingGemma 2 and GLM-OCR in EDGE_MODELS_DIR");
+            // Junk responses would otherwise stay in transformers.js' Cache API bucket.
+            const forget = async () => {
+                const cache = await caches.open("transformers-cache");
+                for (const req of await cache.keys()) if (req.url.includes(`/models/${broken}/onnx/`)) await cache.delete(req);
+            };
+            const w = freshWorker("/models/");
+            try {
+                await fetch(`/__corrupt-graphs?repo=${encodeURIComponent(broken)}`);
+                const bad = await invoke("embedImage", "embed-image", { image: await image() }, { worker: w });
+                expect(bad.out.success).toBe(false);
+                expect(bad.out.error).toMatch(/could not load EmbeddingGemma 2/);
+                await fetch("/__corrupt-graphs?repo=");
+                await forget();
+                // transformers.js chains session creation; before the bundle patch the rejected
+                // link made every later session in this worker fail with the error above.
+                const r = await invoke("ocrImageGlm", "ocr-image", { image: await image() }, { model: "glm-ocr", worker: w });
+                log("ocr-image glm after a failed load (load + generate)", r.ms);
+                expect(r.out.error).toBeUndefined();
+                expect(r.out.text).toMatch(/20261121/);
+            } finally {
+                await fetch("/__corrupt-graphs?repo=");
+                await forget();
+                w.worker.terminate();
+            }
+        },
+        LONG,
+    );
+
+    it(
         "embed-image: EmbeddingGemma 2 returns one normalized 768-d TFV1 vector",
         async (ctx) => {
             if (!(await hasModel("onnx-community/embeddinggemma-2-ONNX"))) ctx.skip("onnx-community/embeddinggemma-2-ONNX is not in EDGE_MODELS_DIR");

@@ -28,6 +28,10 @@ function rawPublicDir(): string {
  */
 const modelsDir = process.env.EDGE_MODELS_DIR ? realpathSync(process.env.EDGE_MODELS_DIR) : "";
 const modelRequests: string[] = [];
+/** `/__corrupt-graphs?repo=<org>/<repo>`: that repo's `.onnx` graphs are served as garbage until reset (empty repo). */
+let corruptRepo = "";
+/** Requests for the plugin's onnxruntime-web assets (`/dist/assets/ort/…`), to check the wasm is fetched once. */
+const ortRequests: string[] = [];
 if (!modelsDir && !process.argv.includes("node")) {
     console.info("[edge] EDGE_MODELS_DIR is not set: the real-model browser tests (test/browser/kb-models.test.ts) skip");
 }
@@ -42,9 +46,28 @@ function serveModels() {
                     res.end(JSON.stringify(modelRequests));
                     return;
                 }
+                if (url === "/__ort-requests") {
+                    res.setHeader("content-type", "application/json");
+                    res.end(JSON.stringify(ortRequests));
+                    return;
+                }
+                if (url.startsWith("/dist/assets/ort/")) ortRequests.push(`${req.method} ${url.slice("/dist/assets/ort/".length).split("?")[0]}`);
+                if (url.startsWith("/__corrupt-graphs")) {
+                    corruptRepo = new URLSearchParams(url.split("?")[1] ?? "").get("repo") ?? "";
+                    res.end("ok");
+                    return;
+                }
                 if (!url.startsWith("/models/")) return next();
                 const rel = normalize(decodeURIComponent(url.slice("/models/".length).split("?")[0]!));
                 modelRequests.push(`${req.method} ${rel}${req.headers.range ? ` range=${req.headers.range}` : ""}`);
+                if (corruptRepo && rel.startsWith(`${corruptRepo}/`) && rel.endsWith(".onnx")) {
+                    // Not a protobuf: onnxruntime-web fails inside InferenceSession.create.
+                    const junk = Buffer.from("this is not an ONNX graph");
+                    res.setHeader("content-type", "application/octet-stream");
+                    res.setHeader("content-length", String(junk.length));
+                    res.end(junk);
+                    return;
+                }
                 const file = join(modelsDir, rel);
                 if (!modelsDir || rel.startsWith("..") || !existsSync(file) || !statSync(file).isFile()) {
                     res.statusCode = 404;
