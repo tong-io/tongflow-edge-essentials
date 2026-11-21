@@ -880,12 +880,12 @@ so the plugin uses `veryfast` (CRF 23 either way): 66 s (≈ 21 fps). `split-vid
 
 ### Bundle
 
-Every library is a lazy dynamic import, so the entry is 14 kB (5.3 kB gzip) and each format loads only
+Every library is a lazy dynamic import, so the entry is 15 kB (5.8 kB gzip) and each format loads only
 what it needs. Gzip transfer on first use, chunks included:
 
 | First use of | Loads (gzip) |
 |---|---|
-| any slot | `index.js` 5.3 kB |
+| any slot | `index.js` 5.8 kB |
 | PDF text / render | pdf.js + its in-thread worker ≈ 495 kB (+ CMaps on demand, ≤ 1.6 MB raw total) |
 | PDF with model `mupdf` | MuPDF.js 24 kB + glue 3.6 kB, wasm 4.7 MB gzip (10.4 MB raw, `dist/assets/mupdf/`) |
 | .docx | mammoth, xmldom, defuddle, linkedom ≈ 496 kB |
@@ -1603,7 +1603,7 @@ tarball 原样解开即可。两个文件都登记在 `models.json`(`id: "ffmpeg
 
 ### 包体
 
-所有库都是懒加载的动态 import:入口只有 14 kB(gzip 5.3 kB),每种格式只加载自己需要的部分。首次使用时的 gzip 传输量(含依赖的 chunk)见上方英文表格。
+所有库都是懒加载的动态 import:入口只有 15 kB(gzip 5.8 kB),每种格式只加载自己需要的部分。首次使用时的 gzip 传输量(含依赖的 chunk)见上方英文表格。
 主要数字:
 
 - PDF 约 495 kB;用模型 `mupdf` 时为 MuPDF.js 24 kB + 胶水 3.6 kB,另加 wasm gzip 4.7 MB(原始 10.4 MB,在 `dist/assets/mupdf/`);
