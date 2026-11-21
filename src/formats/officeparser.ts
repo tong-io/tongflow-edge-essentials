@@ -36,10 +36,24 @@ export async function parseWithOfficeparser(bytes: Uint8Array, ext: string, ctx:
     } catch (e) {
         throw new EdgeError(`officeparser could not read this .${ext} file: ${e instanceof Error ? e.message : String(e)}`);
     }
-    const md = await OfficeGenerator.generate(ast as never, "md" as never);
+    // GitHub-flavoured Markdown: no `{#heading-id}` attributes or `==highlight==` marks (officeparser's
+    // default "extended" dialect), and tables stay plain GFM grids.
+    const md = await OfficeGenerator.generate(ast as never, "md" as never, { mdConfig: { dialect: { extends: "github", attributeLists: "none", highlight: "none" }, fallbackToHtml: false } } as never);
     const value = (md as { value?: unknown }).value;
     const text = typeof value === "string" ? value : value instanceof Uint8Array ? new TextDecoder().decode(value) : "";
-    return tidyText(stripFrontMatter(text));
+    return tidyOfficeMarkdown(text);
+}
+
+/**
+ * officeparser's Markdown, tidied: the metadata front matter dropped, heading anchors
+ * (`## 主要结论 {#主要结论}`) removed, and the `---` rule it puts before the first sheet or slide.
+ */
+export function tidyOfficeMarkdown(md: string): string {
+    return tidyText(
+        stripFrontMatter(md)
+            .replace(/^(#{1,6} .*?)\s*\{#[^}\n]*\}[ \t]*$/gm, "$1")
+            .replace(/^\s*---[ \t]*\r?\n/, ""),
+    );
 }
 
 /** officeparser opens its Markdown with a YAML front-matter block of file metadata (author, dates, generator): dropped. */

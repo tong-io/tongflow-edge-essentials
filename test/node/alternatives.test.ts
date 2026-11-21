@@ -18,7 +18,7 @@ import { MANIFEST_MODELS } from "../../src/vision/catalog.js";
 import { PARSE_IMPLS, implSupports, parseImpl, pickParser } from "../../src/formats/impls.js";
 import { cleanPdfiumText } from "../../src/formats/pdfium.js";
 import { tidyPdf2md } from "../../src/formats/pdf2md.js";
-import { stripFrontMatter } from "../../src/formats/officeparser.js";
+import { stripFrontMatter, tidyOfficeMarkdown } from "../../src/formats/officeparser.js";
 import { CLIP_NORM, clipDims } from "../../src/slots/embed-image-clip.js";
 import { EMBED_IMAGE_MODELS } from "../../src/slots/embed-image.js";
 import { fixture, nodeCtx } from "../helpers/node-ctx.js";
@@ -276,6 +276,9 @@ describe("parse-document alternatives", () => {
         expect(stripFrontMatter('---\nauthor: "x"\ncreated: 2013\n---\n# Title\n')).toBe("# Title\n");
         expect(stripFrontMatter("# No front matter\n---\n")).toBe("# No front matter\n---\n");
         expect(stripFrontMatter("---\n\n| a |\n| --- |\n\n---\n\n| b |")).toBe("---\n\n| a |\n| --- |\n\n---\n\n| b |");
+        expect(tidyOfficeMarkdown("---\n\n# 季度报告 Report {#季度报告-report}\n\n## 结论 {#结论}\n\n| a |\n\n---\n\n| b |")).toBe(
+            "# 季度报告 Report\n\n## 结论\n\n| a |\n\n---\n\n| b |",
+        );
     });
 
     async function parseWith(model: string, name: string, mime?: string) {
@@ -317,6 +320,7 @@ describe("parse-document alternatives", () => {
             expect(out.text!.length, f).toBeGreaterThan(10);
             if (want) expect(out.text, f).toContain(want);
             expect(out.text, f).not.toMatch(/^---\n\w+:/);
+            expect(out.text, f).not.toMatch(/\{#[^}]*\}/);
             console.warn(`[timing] parse-document officeparser ${f}: ${ms} ms`);
         }
         // .xls is not OOXML: the built-in SheetJS parser runs, and the node says so.
