@@ -4,6 +4,7 @@ import { impls, methods, slots } from "../../src/index.js";
 
 const { detectLanguage, extractAudio, renderPages } = impls;
 import { fixture, nodeCtx } from "../helpers/node-ctx.js";
+import { scriptLanguage } from "../../src/slots/detect-language.js";
 
 describe("detect-language (eld)", () => {
     it.each([
@@ -16,10 +17,40 @@ describe("detect-language (eld)", () => {
         expect(out).toEqual({ success: true, language: lang });
     });
 
-    it("fails clearly on text without letters", async () => {
-        const out = await detectLanguage({ text: "12345 !!! ---" }, nodeCtx());
-        expect(out.success).toBe(false);
-        expect(out.error).toMatch(/could not determine/);
+    // Short VAD segments: eld has no answer for these, and one failed item used to fail the
+    // whole fanned-out node. The script decides instead.
+    it.each([
+        ["谢谢，辛苦了。", "zh"],
+        ["谢谢", "zh"],
+        ["嗯。", "zh"],
+        ["好的", "zh"],
+        ["ありがとう", "ja"],
+        ["감사합니다", "ko"],
+    ])("short text %s → %s", async (text, lang) => {
+        const out = await detectLanguage({ text }, nodeCtx());
+        expect(out).toEqual({ success: true, language: lang });
+    });
+
+    it.each([["12345 !!! ---"], ["？？"], ["   "], [""], ["🙂"]])("no letters %j → und", async (text) => {
+        const out = await detectLanguage({ text }, nodeCtx());
+        expect(out).toEqual({ success: true, language: "und" });
+    });
+
+    it("a missing text is und, not an error", async () => {
+        const out = await detectLanguage({} as { text: string }, nodeCtx());
+        expect(out).toEqual({ success: true, language: "und" });
+    });
+});
+
+describe("scriptLanguage (the short-text fallback)", () => {
+    it("decides by the dominant script", () => {
+        expect(scriptLanguage("谢谢，辛苦了。")).toBe("zh");
+        expect(scriptLanguage("東京タワー")).toBe("ja");
+        expect(scriptLanguage("서울 タ")).toBe("ko");
+        expect(scriptLanguage("OK 谢谢")).toBe("zh");
+        expect(scriptLanguage("Thanks 谢")).toBe("und");
+        expect(scriptLanguage("Привет")).toBe("und");
+        expect(scriptLanguage("123 ...")).toBe("und");
     });
 });
 
