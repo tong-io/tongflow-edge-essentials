@@ -1,0 +1,73 @@
+{
+    "name": "tongflow-edge-essentials",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Official TongFlow browser edge plugin: on-device document, media and language nodes (T0, zero-model).",
+    "license": "AGPL-3.0-only",
+    "author": "tong-io",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/tong-io/tongflow-edge-essentials"
+    },
+    "type": "module",
+    "main": "./dist/index.js",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./tongflow.plugin.json": "./tongflow.plugin.json"
+    },
+    "files": [
+        "dist",
+        "tongflow.plugin.json",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "tsdown && node scripts/copy-assets.mjs",
+        "typecheck": "tsc --noEmit",
+        "fixtures": "node scripts/gen-fixtures.mjs",
+        "test": "vitest run --project node",
+        "test:browser": "npm run build && vitest run --project browser",
+        "test:all": "npm run build && vitest run"
+    },
+    "engines": {
+        "node": ">=20"
+    },
+    "dependencies": {
+        "@kenjiuno/msgreader": "1.29.0",
+        "@xberg-io/xberg-wasm": "1.4.2",
+        "@zip.js/zip.js": "2.25.0",
+        "defuddle": "0.19.13",
+        "eld": "2.1.1",
+        "linkedom": "0.18.15",
+        "mammoth": "1.13.0",
+        "marked": "18.2.1",
+        "mediabunny": "1.66.2",
+        "papaparse": "5.7.1",
+        "pdfjs-dist": "6.5.438",
+        "postal-mime": "4.2.1",
+        "pptxtojson": "3.0.0",
+        "turndown": "7.2.5",
+        "xlsx": "file:vendor/xlsx-0.20.3.tgz"
+    },
+    "devDependencies": {
+        "@types/json-schema": "7.0.15",
+        "@types/node": "24.19.2",
+        "@types/papaparse": "5.5.2",
+        "@types/turndown": "5.0.6",
+        "@vitest/browser": "5.1.1",
+        "@vitest/browser-playwright": "5.1.1",
+        "docx": "9.16.0",
+        "json-schema-to-ts": "3.1.1",
+        "playwright": "1.65.1",
+        "pptxgenjs": "4.0.1",
+        "tongflow": "file:../../tongflow/packages/tongflow",
+        "tsdown": "0.23.7",
+        "typescript": "5.9.3",
+        "vitest": "5.1.1"
+    }
+}

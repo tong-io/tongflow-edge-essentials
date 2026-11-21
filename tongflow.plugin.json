@@ -1,0 +1,15 @@
+{
+    "plugin": {
+        "name": "Edge essentials",
+        "description": "On-device document parsing, PDF page rendering, audio/first-frame extraction and language detection in the browser. No models, no uploads."
+    },
+    "runtime": "browser",
+    "entry": "dist/index.js",
+    "slots": [
+        { "nodeSlot": "parse-document", "method": "parseDocument" },
+        { "nodeSlot": "render-pages", "method": "renderPages" },
+        { "nodeSlot": "extract-audio", "method": "extractAudio" },
+        { "nodeSlot": "get-first-frame", "method": "getFirstFrame" },
+        { "nodeSlot": "detect-language", "method": "detectLanguage" }
+    ]
+}

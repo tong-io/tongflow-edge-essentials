@@ -1,0 +1,8 @@
+node_modules/
+test-results/
+.vitest/
+coverage/
+*.log
+.DS_Store
+# dist/ is committed on purpose: the scanner requires the manifest's entry file
+# and hosts load the plugin straight from a clone, without building it.
