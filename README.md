@@ -25,6 +25,10 @@ understanding, GLM-OCR, image embeddings and key-point extraction with 250–850
 | `chunk-text` | `chunkText` | Texts → chunks for the knowledge base (see [Knowledge base](#knowledge-base-chunk-text-embed-text-kb-write)) | own code |
 | `embed-text` | `embedText` | Texts → TFV1 vectors, bge-small-zh-v1.5 (default) or bge-base-zh-v1.5 | transformers.js 4.3.2, onnxruntime-web 1.31.1 |
 | `kb-write` | `kbWrite` | Validates chunks + vectors and summarizes them; the host stores them | own code |
+| `transcribe` | `transcribe` | Audio → Chinese-first `text` with punctuation (SenseVoiceSmall) | onnxruntime-web 1.31.1, see [T2 audio nodes](#t2-audio-nodes) |
+| `vad-segment` | `vadSegment` | Audio → speech segments as WAV `segments` (Silero VAD) | same |
+| `diarize-speakers` | `diarizeSpeakers` | Audio → `segments` JSON `[{speaker,start,end}]` (pyannote + CAM++) | same |
+| `audio-tag` | `audioTag` | Audio → `tags` JSON `[{label,score}]` (CED-tiny, AudioSet) | same |
 
 `parse-document` dispatches by MIME type, then file extension, then the leading bytes (so a
 nameless upload still works):
@@ -182,7 +186,9 @@ compute of bge-small.
 
 `models.json` (repo root, also exported as `tongflow-edge-essentials/models.json`) lists every model
 the plugin can download: `[{id, source: "modelscope:<org>/<repo>", files, approxMB, license,
-attribution?}]`. The weights-hosting job mirrors exactly those files under the model base.
+attribution?}]`. The weights-hosting job mirrors exactly those files under the model base. The audio
+entries also carry `checksums` (`{path: {size, sha256}}`, checked by the plugin before caching),
+`licenseUrl`, `slots` and `upstream` (the GitHub release asset each mirror was verified against).
 
 | id | Source | Files | Size | License |
 |---|---|---|---|---|
@@ -308,6 +314,82 @@ advantage" counts as commercial, so a free demo that promotes a company does too
 if it is not, leave the slot off or pick another model. Mark any modified weight files as modified
 (§4(b)). The license grants no trademark rights.
 
+### T2 audio nodes
+
+Speech and sound, on the CPU (onnxruntime-web wasm EP, no WebGPU needed). Every slot first decodes
+its input **inside the worker** to 16 kHz mono Float32: Mediabunny demuxes any container (m4a/mp4,
+mp3, wav, webm, ogg, flac, video files too) and decodes with WebCodecs `AudioDecoder` (PCM without
+it); channels are averaged and a port of Kaldi's windowed-sinc `LinearResample` converts the rate
+(there is no AudioContext in a worker). Inputs over 100 MB are refused.
+
+| Slot | Method | `models` | What it does |
+|---|---|---|---|
+| `transcribe` | `transcribe` | `sensevoice-small` | SenseVoiceSmall (int8): Chinese first (also en/ja/ko/yue), **with punctuation and ITN**. `language` is a hint (`zh`, `zh-CN`, `en`, `yue`/Cantonese/粤语, `ja`, `ko`; anything else = auto). Up to 30 s in one pass; longer audio is cut at pauses with Silero VAD into ≤ 25 s chunks, recognized one by one (progress `transcribing i/N`) and joined (no separator between CJK pieces). The ABI output has only `text`, so the detected language is not returned. `context` and `max_new_tokens` are ignored (CTC model). |
+| `vad-segment` | `vadSegment` | `silero-vad-v5` | `segments`: one 16 kHz mono 16-bit WAV per speech span (`x-expand-each`), named `<stem>-001-1.09s-5.68s.wav`. Silero's own `get_speech_timestamps` logic; defaults threshold 0.5, min speech 250 ms, min silence 500 ms, pad 200 ms, max 30 s (split at the last ≥ 98 ms pause). `_params` may override `threshold`, `min_speech_ms`, `min_silence_ms`, `speech_pad_ms`, `max_speech_s`. |
+| `diarize-speakers` | `diarizeSpeakers` | `pyannote-campplus-zh` | `segments` (JSON string): `[{"speaker":0,"start":0.976,"end":5.718}, …]`, seconds, sorted by start, speakers numbered by first appearance. pyannote segmentation-3.0 over 10 s windows (1 s step) → per-window local speakers → 3D-Speaker CAM++ (zh-cn) embedding of each → complete-linkage clustering on cosine distance (threshold 0.5) → pyannote reconstruction; segments < 0.3 s dropped, same-speaker gaps ≤ 0.5 s merged. A port of sherpa-onnx's `OfflineSpeakerDiarizationPyannoteImpl`. `_params`: `num_speakers` (exact count), `threshold`. |
+| `audio-tag` | `audioTag` | `ced-tiny` | `tags` (JSON string): `[{"label":"Speech","score":0.7072}, …]`, AudioSet's 527 classes, the top 10 with score ≥ 0.1 (at least one). Long audio is tagged in 10 s windows (CED's training length) and each class keeps its maximum. `_params`: `top_k`, `min_score`. |
+
+**Runtime choice: onnxruntime-web, not sherpa-onnx WASM.** The plan was sherpa-onnx's WASM build
+with runtime-fetched models. It is not practical: the browser builds published with sherpa-onnx
+2.0.2 bake their models in with `--preload-file` and cover only VAD/TTS/enhancement; the npm
+`sherpa-onnx` wasm is built with `NODERAWFS` (it throws outside Node) and has no audio tagging; and
+a custom emscripten build would add a 15.6 MB second wasm with its own onnxruntime that cannot be
+shared. So the **same sherpa-onnx ONNX exports** run on the plugin's single onnxruntime-web
+(1.31.1, the instance and asyncify wasm transformers.js uses; `src/ml/ort.ts`), and the front ends
+are TypeScript ports of sherpa-onnx / kaldi-native-fbank (Apache-2.0): Kaldi fbank (povey/hamming/
+hann windows, snip-edges, pre-emphasis, mel banks), SenseVoice LFR (7/6) + CMVN from the model
+metadata + CTC greedy search, CED's fbank + AmplitudeToDB, CAM++ global-mean normalization, the
+pyannote powerset/aggregation/clustering logic. ONNX custom metadata is read straight from the
+protobuf (`src/ml/onnx-meta.ts`). The ports are checked against kaldi-native-fbank (golden
+features in `test/fixtures/audio/fbank-golden.json`) and against sherpa-onnx 2.0.2 itself (Python)
+on the same files: identical SenseVoice text, VAD spans within 0.05 s, the same diarization turns
+(starts within 0.02 s), CED scores within 0.015.
+
+**Model files and cache.** Fetched from the model base (`<modelBase><org>/<repo>/<path>`), verified
+(size + SHA-256 from `src/models/registry.ts`, the same values as `models.json`), then kept in the
+Cache API (`tongflow-edge-models-v1`); each download is reported through `modelDownload` with
+`file` = `<org>/<repo>/<path>` and `model` = the model id. Models stay loaded in the worker. Long
+audio is processed in chunks with progress, and cancellation is checked between chunks (the loops
+yield to the event loop so the engine's `cancel` message gets in). In addition to `?modelBase=` on
+the entry URL, a host may post `{type: "config", modelBase}` to the worker before its first invoke.
+
+**Measured (MacBook, Chromium headless, single thread, no cross-origin isolation; 21 s two-voice
+Chinese dialog):** transcribe 8.5 s warm (RTF 0.40; first call 13.5 s including loading the 239 MB
+model from a local server), 63 s via VAD chunks 26 s; vad-segment 0.36 s; diarize-speakers 8.5 s;
+audio-tag 0.2 s for 1.5 s. Phones are slower (research/09 cites RTF ≈ 0.7 for SenseVoice in
+Android Chrome); cross-origin isolation lets onnxruntime-web use up to 4 threads.
+
+| id | Source (ModelScope) | Files | Size | License |
+|---|---|---|---|---|
+| `sensevoice-small-int8` | `pengzhendong/sherpa-onnx-sense-voice-zh-en-ja-ko-yue` | `model.int8.onnx`, `tokens.txt` | 240 MB (one 228 MiB file) | [FunASR Model License v1.1](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE) (copy in `licenses/`) |
+| `silero-vad-v5` | `pengzhendong/silero-vad` | `v5/silero_vad.onnx` | 2.3 MB | MIT |
+| `pyannote-segmentation-3.0` | `pengzhendong/sherpa-onnx-pyannote-segmentation-3-0` | `model.onnx` | 6 MB | MIT |
+| `3dspeaker-campplus-zh-cn-16k` | `lihuoo/3dspeaker-recognition-models` | `3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx` | 28 MB | Apache-2.0 |
+| `ced-tiny-int8` | `k2-fsa/sherpa-onnx-ced-tiny-audio-tagging-2024-04-19` | `model.int8.onnx`, `class_labels_indices.csv` | 6.2 MB | CC-BY-4.0 |
+
+sherpa-onnx publishes these exports only on GitHub Releases; the ModelScope repos above are
+mirrors, checked file by file against the GitHub assets on 2026-11-21 (details in `models.json`
+`upstream`). SenseVoice, pyannote, Silero (vs. snakers4's v5.1.2) and CED are byte-identical. The
+CAM++ file is the earlier export: the current GitHub asset was re-exported (PyTorch 2.14.1, one
+AveragePool attribute changed with zero padding) and gives bit-identical embeddings; no
+byte-identical mirror of it exists on ModelScope. `transcribe` downloads the VAD only for audio
+longer than 30 s. **The SenseVoice file is 228 MiB, over the 100 MiB cap that applies to
+assets in this repo; it is a model-base file, so the weight host must serve files that large.**
+
+**Attribution (about / third-party licenses page):**
+- **SenseVoiceSmall by FunASR/FunAudioLLM** — [model card](https://www.modelscope.cn/models/iic/SenseVoiceSmall),
+  [FunASR Model License v1.1](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE). The model
+  name must be kept, and comparisons with other models must stay factual (§4.2). Commercial use is
+  still pending in [SenseVoice#334](https://github.com/QwenAudio/SenseVoice/issues/334): re-check
+  before launch (fallback: X-ASR, Apache-2.0).
+- **CED-tiny** by Heinrich Dinkel, Yongqing Wang, Zhiyong Yan, Junbo Zhang and Yujun Wang (Xiaomi),
+  [RicherMans/CED](https://github.com/RicherMans/CED); weights [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+  ([Zenodo 8275347](https://zenodo.org/record/8275347)); converted to ONNX and int8-quantized by
+  k2-fsa/sherpa-onnx. Only the weights are used: the CED training code is GPL-3.0 and is not bundled.
+- pyannote/segmentation-3.0 by Hervé Bredin and pyannote.audio contributors (MIT); 3D-Speaker CAM++
+  (iic/speech_campplus_sv_zh-cn_16k-common, Alibaba Tongyi Lab, Apache-2.0); Silero VAD by Silero Team
+  (MIT); ONNX exports by k2-fsa/sherpa-onnx (Apache-2.0).
+
 ### Bundle
 
 Every library is a lazy dynamic import, so the entry is 12 kB and each format loads only what it
@@ -315,7 +397,7 @@ needs. Gzip transfer on first use, chunks included:
 
 | First use of | Loads (gzip) |
 |---|---|
-| any slot | `index.js` 4.9 kB |
+| any slot | `index.js` 5.3 kB |
 | PDF text / render | pdf.js + its in-thread worker ≈ 495 kB (+ CMaps on demand, ≤ 1.6 MB raw total) |
 | .docx | mammoth, xmldom, defuddle, linkedom ≈ 496 kB |
 | .xlsx/.xls/.ods | SheetJS + code pages ≈ 326 kB |
@@ -332,6 +414,7 @@ needs. Gzip transfer on first use, chunks included:
 | `dist/kb-host.js` / `dist/embed-query.js` (host entries) | 0.6 kB / 0.65 kB |
 | any T3 node (WebGPU) | slot glue ≈ 6 kB + the same transformers.js / onnxruntime-web / ort wasm, then the model (250–850 MB) |
 | gen-text | + structured output ≈ 15 kB |
+| any T2 audio node | audio pipeline 12 kB + Mediabunny 196 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared with transformers.js), then the models: SenseVoice 240 MB, VAD 2.3 MB, diarization 34 MB, CED 6.2 MB |
 
 `dist/` is committed: the scanner requires the manifest's `entry` to exist, and hosts load the
 plugin straight from a clone. Rebuild it after any source change.
@@ -433,15 +516,16 @@ and none is GPL-only.
 | onnxruntime-web | 1.31.1 | MIT | Bundled JS + `dist/assets/ort/` wasm; notice in `licenses/onnxruntime-web-MIT.txt` |
 
 Model weights are not part of this package; they are downloaded from the host's model base. Their
-licenses are in the [T3 models table](#t3-webgpu-nodes); LFM2.5-350M's full text is in
-`licenses/`. Attribution for the about page: "Qwen3.5-0.8B by the Qwen team, Alibaba Cloud
+licenses are in the [T3 models table](#t3-webgpu-nodes) and the [T2 audio section](#t2-audio-nodes);
+LFM2.5-350M's and the FunASR model license's full texts are in `licenses/`. Attribution for the about page: "Qwen3.5-0.8B by the Qwen team, Alibaba Cloud
 (Apache-2.0)", "GLM-OCR by Zhipu AI (MIT)", "EmbeddingGemma 2 by Google DeepMind (Apache-2.0,
 Gemma Prohibited Use Policy)", "LFM2.5-350M by Liquid AI, Inc. (LFM Open License v1.0)".
 
 Avoided on purpose: MuPDF.js and scribe.js (AGPL-3.0), the ffmpeg.wasm core (GPL-2.0+) and the
 Ultralytics models (AGPL-3.0).
 
-Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (Apache-2.0).
+Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (Apache-2.0). The audio
+fixtures in `test/fixtures/audio/` were synthesized for this repo with macOS `say` (voices Tingting and Reed).
 
 ---
 
@@ -463,6 +547,10 @@ Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (
 | `chunk-text` | `chunkText` | 文本切成知识库片段(见下方「知识库节点」) | 自写 |
 | `embed-text` | `embedText` | 文本转 TFV1 向量,默认 bge-small-zh-v1.5,可换 bge-base-zh-v1.5 | transformers.js 4.3.2、onnxruntime-web 1.31.1 |
 | `kb-write` | `kbWrite` | 校验并汇总片段和向量,由宿主存储 | 自写 |
+| `transcribe` | `transcribe` | 音频转中文优先、带标点的 `text`(SenseVoiceSmall) | onnxruntime-web 1.31.1,见下方「T2 音频节点」 |
+| `vad-segment` | `vadSegment` | 音频切成语音段 WAV(`segments`,Silero VAD) | 同上 |
+| `diarize-speakers` | `diarizeSpeakers` | 音频输出说话人分段 JSON `[{speaker,start,end}]`(pyannote + CAM++) | 同上 |
+| `audio-tag` | `audioTag` | 音频输出事件标签 JSON `[{label,score}]`(CED-tiny,AudioSet) | 同上 |
 
 `parse-document` 按以下顺序判断格式:先看 MIME,再看扩展名,最后看文件头字节。没有文件名的上传也能识别。
 
@@ -631,6 +719,60 @@ LFM2.5-350M q4f16 对约 200 字的中文合同条款做 `gen-text`,首次 6–1
 **只有当使用方的法律实体(连同其控制、受其控制或与其同受控制的所有关联实体)年收入低于 1000 万美元时,商业使用才在授权范围内**
 (许可证的 "Threshold",§1、§5)。"直接或间接商业利益" 都算商业使用,替公司揽客的免费 demo 也算。启用 `gen-text` 前,必须由业务方确认运营主体
 及其关联方收入低于门槛;否则不要开启该 slot,或改用其它模型。修改过的权重文件要标注已修改(§4(b));许可证不授予商标权。
+
+### T2 音频节点
+
+语音与声音节点,跑在 CPU 上(onnxruntime-web 的 wasm EP,不需要 WebGPU)。每个 slot 先**在 worker 内**把输入解码成
+16 kHz 单声道 Float32:Mediabunny 解封装各种容器(m4a/mp4、mp3、wav、webm、ogg、flac,视频文件也可以),用 WebCodecs
+`AudioDecoder` 解码(PCM 不需要它);多声道取平均,采样率用移植的 Kaldi 加窗 sinc `LinearResample` 转换(worker 里没有
+AudioContext)。超过 100 MB 的输入会被拒绝。
+
+| Slot | 方法 | `models` | 作用 |
+|---|---|---|---|
+| `transcribe` | `transcribe` | `sensevoice-small` | SenseVoiceSmall(int8):中文优先(也支持英/日/韩/粤),**带标点和 ITN**。`language` 是提示(`zh`、`zh-CN`、`en`、`yue`/粤语、`ja`、`ko`,其它按自动)。30 s 以内一次识别;更长的音频先用 Silero VAD 在停顿处切成不超过 25 s 的段,逐段识别(进度 `transcribing i/N`)再拼接(中文段之间不加分隔)。ABI 输出只有 `text`,识别出的语种不返回。`context`、`max_new_tokens` 不生效(CTC 模型) |
+| `vad-segment` | `vadSegment` | `silero-vad-v5` | `segments`:每个语音段一个 16 kHz 单声道 16 位 WAV(`x-expand-each`),文件名形如 `<stem>-001-1.09s-5.68s.wav`。算法即 Silero 官方的 `get_speech_timestamps`;默认阈值 0.5、最短语音 250 ms、最短静音 500 ms、前后各补 200 ms、单段最长 30 s(在最后一个 ≥ 98 ms 的停顿处切开)。`_params` 可覆盖 `threshold`、`min_speech_ms`、`min_silence_ms`、`speech_pad_ms`、`max_speech_s` |
+| `diarize-speakers` | `diarizeSpeakers` | `pyannote-campplus-zh` | `segments`(JSON 字符串):`[{"speaker":0,"start":0.976,"end":5.718}, …]`,单位秒,按开始时间排序,说话人按首次出现编号。pyannote segmentation-3.0 以 10 s 窗口、1 s 步长做局部分割 → 每个窗口内的局部说话人各取一个 3D-Speaker CAM++(中文)声纹 → 按余弦距离做全连接层次聚类(阈值 0.5)→ pyannote 的重建;短于 0.3 s 的段丢弃,同一说话人间隔 ≤ 0.5 s 的段合并。移植自 sherpa-onnx 的 `OfflineSpeakerDiarizationPyannoteImpl`。`_params`:`num_speakers`(指定人数)、`threshold` |
+| `audio-tag` | `audioTag` | `ced-tiny` | `tags`(JSON 字符串):`[{"label":"Speech","score":0.7072}, …]`,AudioSet 527 类,取分数 ≥ 0.1 的前 10 个(至少一个)。长音频按 10 s 窗口(CED 的训练长度)分别打标,每类取最大值。`_params`:`top_k`、`min_score` |
+
+**运行时选型:用 onnxruntime-web,不用 sherpa-onnx WASM。** 原计划用 sherpa-onnx 的 WASM 构建并在运行时拉模型,但不可行:
+sherpa-onnx 2.0.2 发布的浏览器构建都用 `--preload-file` 把模型打进包里,而且只有 VAD/TTS/降噪;npm 上 `sherpa-onnx` 的 wasm
+用 `NODERAWFS` 编译(在 Node 之外直接抛错),也没有音频标注;自己用 emscripten 构建则要多带一个 15.6 MB、自带 onnxruntime
+且无法共享的 wasm。因此改为在插件唯一的 onnxruntime-web(1.31.1,与 transformers.js 共用同一实例和 asyncify wasm,见
+`src/ml/ort.ts`)上运行**同一批 sherpa-onnx 导出的 ONNX**,前端处理用 TypeScript 移植 sherpa-onnx / kaldi-native-fbank
+(Apache-2.0):Kaldi fbank(povey/hamming/hann 窗、snip-edges、预加重、mel 滤波器组)、SenseVoice 的 LFR(7/6)+ 模型
+元数据里的 CMVN + CTC 贪心解码、CED 的 fbank + AmplitudeToDB、CAM++ 的全局均值归一化、pyannote 的 powerset/聚合/聚类。
+ONNX 自定义元数据直接从 protobuf 读取(`src/ml/onnx-meta.ts`)。移植结果对照 kaldi-native-fbank(黄金特征
+`test/fixtures/audio/fbank-golden.json`)以及 sherpa-onnx 2.0.2(Python)在同样文件上的输出:SenseVoice 文本完全一致,
+VAD 段边界相差 0.05 s 以内,说话人分离得到相同的轮次(起点相差 0.02 s 以内),CED 分数相差 0.015 以内。
+
+**模型文件与缓存**:从 model base(`<modelBase><org>/<repo>/<path>`)下载,按 `src/models/registry.ts` 里的大小和 SHA-256
+(与 `models.json` 一致)校验后存入 Cache API(`tongflow-edge-models-v1`);每次下载都经 `modelDownload` 上报,`file` 为
+`<org>/<repo>/<path>`,`model` 为模型 id。模型加载后常驻 worker。长音频分块处理并上报进度,块与块之间检查取消(循环会让出
+事件循环,保证引擎的 `cancel` 消息能及时送达)。除了入口 URL 上的 `?modelBase=`,宿主也可以在第一次调用前向 worker 发
+`{type: "config", modelBase}`。
+
+**实测**(MacBook,Chromium 无头,单线程,未跨源隔离;21 s 的双人中文对话):transcribe 热态 8.5 s(RTF 0.40;首次 13.5 s,
+含从本地服务器加载 239 MB 模型),63 s 音频走 VAD 分段共 26 s;vad-segment 0.36 s;diarize-speakers 8.5 s;audio-tag 处理 1.5 s
+音频 0.2 s。手机会更慢(research/09 引用 Android Chrome 上 SenseVoice 的 RTF 约 0.7);跨源隔离后 onnxruntime-web 最多用 4 线程。
+
+模型清单(id、来源、文件、大小、许可证)见英文部分的表格。sherpa-onnx 只在 GitHub Releases 发布这些导出,上表的 ModelScope
+仓库是镜像,2026-11-21 已逐文件对照 GitHub 资产(详情见 `models.json` 的 `upstream`):SenseVoice、pyannote、Silero(对照
+snakers4 的 v5.1.2)、CED 字节一致;CAM++ 是较早的导出,GitHub 上的当前文件已重新导出(PyTorch 2.14.1,一个 AveragePool
+属性在零填充下改了值),两者声纹输出逐位相同,ModelScope 上没有与当前 GitHub 文件字节一致的镜像。`transcribe` 只有在音频超过
+30 s 时才下载 VAD。**SenseVoice 单文件 228 MiB,超过本仓库资产的 100 MiB 上限;它属于 model base 上的文件,权重托管方要能提供
+这么大的文件。**
+
+**署名(关于/第三方许可页面):**
+- **SenseVoiceSmall by FunASR/FunAudioLLM**,附[模型卡](https://www.modelscope.cn/models/iic/SenseVoiceSmall)和
+  [FunASR 模型开源协议 v1.1](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE)(全文见 `licenses/`)。须保留模型名,
+  与其它模型的对比只写客观数据(§4.2)。商用口径仍在 [SenseVoice#334](https://github.com/QwenAudio/SenseVoice/issues/334)
+  等待确认,上线前再查一次(备选:X-ASR,Apache-2.0)。
+- **CED-tiny**,作者 Heinrich Dinkel、Yongqing Wang、Zhiyong Yan、Junbo Zhang、Yujun Wang(小米),
+  [RicherMans/CED](https://github.com/RicherMans/CED);权重 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+  ([Zenodo 8275347](https://zenodo.org/record/8275347));由 k2-fsa/sherpa-onnx 转为 ONNX 并做 int8 量化。只用权重,CED 的训练
+  代码是 GPL-3.0,未打包。
+- pyannote/segmentation-3.0(Hervé Bredin 及 pyannote.audio 贡献者,MIT);3D-Speaker CAM++(iic/speech_campplus_sv_zh-cn_16k-common,
+  阿里通义实验室,Apache-2.0);Silero VAD(Silero Team,MIT);ONNX 导出来自 k2-fsa/sherpa-onnx(Apache-2.0)。
 
 ### 包体
 

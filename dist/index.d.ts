@@ -1,6 +1,7 @@
 /**
  * tongflow-edge-essentials: browser edge nodes (T0 zero-model nodes, knowledge-base nodes,
- * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, EmbeddingGemma 2, LFM2.5-350M).
+ * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, EmbeddingGemma 2, LFM2.5-350M; and the T2 audio nodes:
+ * SenseVoiceSmall, Silero VAD, pyannote + CAM++, CED-tiny).
  *
  * The default export is `defineEdgePlugin({ methods })`: loaded in a dedicated Web
  * Worker it answers the engine's worker protocol; imported anywhere else (the
@@ -88,6 +89,10 @@ export declare const methods: {
   ocrImageGlm: import("tongflow/engine/worker").EdgeMethod<"ocr-image">;
   embedImage: import("tongflow/engine/worker").EdgeMethod<"embed-image">;
   genText: import("tongflow/engine/worker").EdgeMethod<"gen-text">;
+  transcribe: import("tongflow/engine/worker").EdgeMethod<"transcribe">;
+  vadSegment: import("tongflow/engine/worker").EdgeMethod<"vad-segment">;
+  diarizeSpeakers: import("tongflow/engine/worker").EdgeMethod<"diarize-speakers">;
+  audioTag: import("tongflow/engine/worker").EdgeMethod<"audio-tag">;
 };
 /** Slot → method name, mirroring the manifest (kept in sync by a test). */
 export declare const slots: {
@@ -104,9 +109,17 @@ export declare const slots: {
   readonly "embed-image": "embedImage";
   readonly "gen-text": "genText";
   readonly "ocr-image": "ocrImageGlm";
+  readonly transcribe: "transcribe";
+  readonly "vad-segment": "vadSegment";
+  readonly "diarize-speakers": "diarizeSpeakers";
+  readonly "audio-tag": "audioTag";
 };
 /** The slot implementations against the internal context (for hosts and tests that bring their own). */
 export declare const impls: {
+  transcribe: SlotImpl<"transcribe">;
+  vadSegment: SlotImpl<"vad-segment">;
+  diarizeSpeakers: SlotImpl<"diarize-speakers">;
+  audioTag: SlotImpl<"audio-tag">;
   imageGenText: (input: VisionTextInput, ctx: EdgeContext) => Promise<EdgeSlotOutput<"image-gen-text">>;
   ocrImageGlm: (input: SlotInput<"ocr-image">, ctx: EdgeContext) => Promise<EdgeSlotOutput<"ocr-image">>;
   embedImage: (input: SlotInput<"embed-image">, ctx: EdgeContext) => Promise<EdgeSlotOutput<"embed-image">>;
@@ -134,6 +147,10 @@ declare const _default: {
     ocrImageGlm: import("tongflow/engine/worker").EdgeMethod<"ocr-image">;
     embedImage: import("tongflow/engine/worker").EdgeMethod<"embed-image">;
     genText: import("tongflow/engine/worker").EdgeMethod<"gen-text">;
+    transcribe: import("tongflow/engine/worker").EdgeMethod<"transcribe">;
+    vadSegment: import("tongflow/engine/worker").EdgeMethod<"vad-segment">;
+    diarizeSpeakers: import("tongflow/engine/worker").EdgeMethod<"diarize-speakers">;
+    audioTag: import("tongflow/engine/worker").EdgeMethod<"audio-tag">;
   };
 };
 export { type Asset, DEFAULT_EMBED_MODEL, EMBED_MODELS, type EdgeConfig, type EdgeContext, type EdgeSlotOutput, type KbWriteSummary, type NodeSlot, type SlotImpl, type SlotInput, type SlotOutput, _default as default, toEdgeContext };

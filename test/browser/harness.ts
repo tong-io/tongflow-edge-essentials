@@ -22,19 +22,26 @@ let seq = 0;
  */
 export function pluginWorker(): { worker: Worker; ready: Promise<Msg> } {
     if (!worker) {
-        worker = new Worker(new URL("/dist/index.js", location.origin), { type: "module", name: "tongflow-edge-essentials" });
-        const w = worker;
-        ready = new Promise((resolve, reject) => {
-            const onMessage = (e: MessageEvent<Msg>) => {
-                if (e.data?.type !== "ready") return;
-                w.removeEventListener("message", onMessage);
-                resolve(e.data);
-            };
-            w.addEventListener("message", onMessage);
-            w.addEventListener("error", (e) => reject(new Error(`worker failed to load: ${e.message}`)), { once: true });
-        });
+        const w = startWorker("/dist/index.js");
+        worker = w.worker;
+        ready = w.ready;
     }
-    return { worker, ready: ready! };
+    return { worker: worker!, ready: ready! };
+}
+
+/** A fresh plugin worker (e.g. with `?modelBase=` on the entry URL). */
+export function startWorker(entry: string): { worker: Worker; ready: Promise<Msg> } {
+    const w = new Worker(new URL(entry, location.origin), { type: "module", name: "tongflow-edge-essentials" });
+    const r = new Promise<Msg>((resolve, reject) => {
+        const onMessage = (e: MessageEvent<Msg>) => {
+            if (e.data?.type !== "ready") return;
+            w.removeEventListener("message", onMessage);
+            resolve(e.data);
+        };
+        w.addEventListener("message", onMessage);
+        w.addEventListener("error", (e) => reject(new Error(`worker failed to load: ${e.message}`)), { once: true });
+    });
+    return { worker: w, ready: r };
 }
 
 export interface CallResult {
@@ -52,11 +59,19 @@ const SLOT_OF: Record<string, string> = {
     chunkText: "chunk-text",
     embedText: "embed-text",
     kbWrite: "kb-write",
+    transcribe: "transcribe",
+    vadSegment: "vad-segment",
+    diarizeSpeakers: "diarize-speakers",
+    audioTag: "audio-tag",
 };
 
 /** Invoke one plugin method over the worker protocol. */
-export async function call(method: string, input: Record<string, unknown>): Promise<CallResult> {
-    const { worker: w, ready: r } = pluginWorker();
+export async function call(
+    method: string,
+    input: Record<string, unknown>,
+    opts: { worker?: { worker: Worker; ready: Promise<Msg> }; model?: string; params?: Record<string, unknown>; cancelOn?: (m: Msg) => boolean } = {},
+): Promise<CallResult> {
+    const { worker: w, ready: r } = opts.worker ?? pluginWorker();
     await r;
     const id = ++seq;
     const progress: CallResult["progress"] = [];
@@ -65,20 +80,29 @@ export async function call(method: string, input: Record<string, unknown>): Prom
         const onMessage = (e: MessageEvent<Msg>) => {
             const m = e.data;
             if (m.id !== id) return;
+            if (opts.cancelOn?.(m)) w.postMessage({ type: "cancel", id });
             if (m.type === "progress") progress.push({ message: m.message ?? "", percent: m.percent });
             else if (m.type === "model-download") downloads.push({ loaded: m.loaded ?? 0, total: m.total, file: m.file });
             else {
                 w.removeEventListener("message", onMessage);
-                if (m.type === "error") reject(new Error(m.message));
+                if (m.type === "error") reject(Object.assign(new Error(m.message), { name: (m as { name?: string }).name ?? "Error" }));
                 else resolve({ out: m.output, progress, downloads });
             }
         };
         w.addEventListener("message", onMessage);
-        w.postMessage({ type: "invoke", id, method, nodeSlot: SLOT_OF[method] ?? method, input });
+        w.postMessage({
+            type: "invoke",
+            id,
+            method,
+            nodeSlot: SLOT_OF[method] ?? method,
+            input,
+            ...(opts.model ? { model: opts.model } : {}),
+            ...(opts.params ? { params: opts.params } : {}),
+        });
     });
 }
 
-function toBase64(bytes: Uint8Array): string {
+export function toBase64(bytes: Uint8Array): string {
     let bin = "";
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
     return btoa(bin);

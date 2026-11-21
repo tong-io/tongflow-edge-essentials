@@ -9,8 +9,10 @@ describe("built plugin as a DOM-less module worker, over the engine protocol (Ch
         const ready = await pluginWorker().ready;
         expect(ready.protocol).toBe(1);
         expect(ready.methods?.sort()).toEqual([
+            "audioTag",
             "chunkText",
             "detectLanguage",
+            "diarizeSpeakers",
             "embedImage",
             "embedText",
             "extractAudio",
@@ -21,6 +23,8 @@ describe("built plugin as a DOM-less module worker, over the engine protocol (Ch
             "ocrImageGlm",
             "parseDocument",
             "renderPages",
+            "transcribe",
+            "vadSegment",
         ]);
     });
 
