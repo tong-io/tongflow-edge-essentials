@@ -17,6 +17,8 @@ export interface ModelVariant {
     dtype: Record<string, Dtype>;
     /** Approximate first-run download in MB. */
     approxMB: number;
+    /** `false`: every graph is one self-contained `.onnx` file (no `.onnx_data` beside it). */
+    external?: boolean;
 }
 
 export interface T3Model {
@@ -91,6 +93,55 @@ export const LFM25_350M: T3Model = {
 
 export const T3_MODELS = [QWEN35_VL, GLM_OCR, EMBEDDING_GEMMA_2, LFM25_350M] as const;
 
+/* ---------- alternative implementations (picked in the canvas "换实现" menu) ---------- */
+
+/** `image-gen-text` / `image-describe` alternative: LFM2.5-VL-450M (WebGPU). Multilingual, weak at fine OCR. */
+export const LFM25_VL_450M: T3Model = {
+    id: "lfm2.5-vl-450m",
+    name: "LFM2.5-VL-450M",
+    repo: "onnx-community/LFM2.5-VL-450M-ONNX",
+    license: "LFM Open License v1.0",
+    licenseUrl: "licenses/LFM-Open-License-v1.0.txt",
+    attribution: "LFM2.5-VL-450M by Liquid AI, Inc., licensed under the LFM Open License v1.0; ONNX conversion by onnx-community",
+    files: VLM_FILES,
+    f16: { dtype: { embed_tokens: "q4f16", vision_encoder: "q4f16", decoder_model_merged: "q4f16" }, approxMB: 319 },
+    fallback: { dtype: { embed_tokens: "q4", vision_encoder: "q4", decoder_model_merged: "q4" }, approxMB: 368 },
+};
+
+/** `image-gen-text` / `image-describe` alternative: SmolVLM2-500M-Video-Instruct (WebGPU). English-centric. */
+export const SMOLVLM2_500M: T3Model = {
+    id: "smolvlm2-500m",
+    name: "SmolVLM2-500M",
+    repo: "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+    license: "Apache-2.0",
+    licenseUrl: "https://www.modelscope.cn/models/HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+    attribution: "SmolVLM2-500M-Video-Instruct by Hugging Face (HuggingFaceTB), Apache-2.0",
+    files: ["config.json", "generation_config.json", "tokenizer.json", "tokenizer_config.json", "chat_template.json", "special_tokens_map.json", "preprocessor_config.json", "processor_config.json"],
+    // Single-file graphs. Without shader-f16 the token embeddings load as int8 (47 MB) instead of the 189 MB q4 (= fp32) table.
+    f16: { dtype: { embed_tokens: "q4f16", vision_encoder: "q4f16", decoder_model_merged: "q4f16" }, approxMB: 361, external: false },
+    fallback: { dtype: { embed_tokens: "q8", vision_encoder: "q4", decoder_model_merged: "q4" }, approxMB: 347, external: false },
+};
+
+/** `image-gen-text` / `image-describe` alternative: Florence-2-base, task `<MORE_DETAILED_CAPTION>` (WebGPU). English only. */
+export const FLORENCE2_BASE: T3Model = {
+    id: "florence-2-base",
+    name: "Florence-2-base",
+    repo: "onnx-community/Florence-2-base",
+    license: "MIT",
+    licenseUrl: "https://www.modelscope.cn/models/microsoft/Florence-2-base",
+    attribution: "Florence-2-base by Microsoft, MIT License; ONNX conversion by onnx-community",
+    files: ["config.json", "generation_config.json", "preprocessor_config.json", "processor_config.json", "tokenizer.json", "tokenizer_config.json"],
+    // One set for every GPU: the q4f16 merged decoder of this export does not load in onnxruntime-web 1.31.1
+    // ("Subgraph output (logits) is an outer scope value being returned directly"); the q4 one does.
+    f16: { dtype: { embed_tokens: "q8", vision_encoder: "q4", encoder_model: "q4", decoder_model_merged: "q4" }, approxMB: 218, external: false },
+    fallback: { dtype: { embed_tokens: "q8", vision_encoder: "q4", encoder_model: "q4", decoder_model_merged: "q4" }, approxMB: 218, external: false },
+};
+
+/** The alternative VLMs above (each also has a models.json entry with checksums). */
+export const ALT_MODELS = [LFM25_VL_450M, SMOLVLM2_500M, FLORENCE2_BASE] as const;
+/** `image-gen-text` / `image-describe` models, default first (as in the manifest). */
+export const VISION_TEXT_MODELS = [QWEN35_VL, LFM25_VL_450M, SMOLVLM2_500M, FLORENCE2_BASE] as const;
+
 /** `<session><suffix>.onnx`, the graph file name transformers.js loads for a dtype. */
 function graphName(session: string, dtype: Dtype): string {
     return `${dtype === "fp32" ? session : `${session}_${dtype === "q8" ? "quantized" : dtype}`}.onnx`;
@@ -101,7 +152,8 @@ export function onnxFiles(variant: ModelVariant): string[] {
     const out: string[] = [];
     for (const [session, dtype] of Object.entries(variant.dtype)) {
         const name = graphName(session, dtype);
-        out.push(`onnx/${name}`, `onnx/${name}_data`);
+        out.push(`onnx/${name}`);
+        if (variant.external !== false) out.push(`onnx/${name}_data`);
     }
     return out;
 }
@@ -120,6 +172,7 @@ export function onnxFiles(variant: ModelVariant): string[] {
  */
 export function externalDataFormat(variant: ModelVariant): Record<string, number> {
     const out: Record<string, number> = {};
+    if (variant.external === false) return out;
     for (const [session, dtype] of Object.entries(variant.dtype)) out[graphName(session, dtype)] = 1;
     return out;
 }
@@ -131,6 +184,7 @@ export function externalDataFormat(variant: ModelVariant): Record<string, number
  * see it. Entries already in the config are kept.
  */
 export function withExternalData<C extends object>(config: C, variant: ModelVariant): C {
+    if (variant.external === false) return config;
     const c = config as { "transformers.js_config"?: { use_external_data_format?: unknown } };
     const js = (c["transformers.js_config"] ??= {});
     const prev = js.use_external_data_format;

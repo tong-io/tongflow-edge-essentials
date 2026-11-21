@@ -24,6 +24,11 @@ export interface GenerateArgs {
     /** Extra logits processors (structured output). */
     logitsProcessor?: unknown;
     label?: string;
+    /**
+     * Leading ids of the output sequence that are not generated text. Default: the prompt length
+     * (decoder-only models return prompt + answer); 0 for an encoder-decoder model (Florence-2).
+     */
+    promptTokens?: number;
 }
 
 /**
@@ -37,7 +42,8 @@ export async function generateText(
     args: GenerateArgs,
 ): Promise<{ text: string; tokens: number; promptTokens: number }> {
     throwIfAborted(ctx.signal);
-    const promptTokens = args.inputs.input_ids.dims.at(-1) ?? 0;
+    const inputTokens = args.inputs.input_ids.dims.at(-1) ?? 0;
+    const promptTokens = args.promptTokens ?? inputTokens;
     const progress = new TokenProgress(ctx.onProgress, args.maxNewTokens, args.label ?? "generating");
     const stop = new tf.InterruptableStoppingCriteria();
     const onAbort = () => stop.interrupt();
@@ -48,7 +54,7 @@ export async function generateText(
         callback_function: (piece: string) => progress.append(piece),
         token_callback_function: (ids: bigint[]) => progress.token(ids.length),
     });
-    ctx.onProgress({ fraction: 0, message: `reading the input (${promptTokens} tokens)` });
+    ctx.onProgress({ fraction: 0, message: `reading the input (${inputTokens} tokens)` });
     try {
         const out = await (args.model as Generator).generate({
             ...args.inputs,

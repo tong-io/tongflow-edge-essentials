@@ -12,10 +12,13 @@
  * (`_params.repetition_penalty`, `_params.no_repeat_ngram_size`; 1 / 0 turn them off), a
  * default `max_new_tokens` of 192, and {@link cleanDescription} on the answer. Without them
  * Qwen3.5-0.8B looped a clause up to the token limit on a scanned page.
+ *
+ * Alternatives (the node's model): `lfm2.5-vl-450m`, `smolvlm2-500m`, `florence-2-base`, in
+ * `vlm-alt.ts`, loaded only when picked.
  */
 
 import type { EdgeContext } from "../context.js";
-import { QWEN35_VL, pickModel, variantFor } from "../ml/catalog.js";
+import { QWEN35_VL, VISION_TEXT_MODELS, pickModel, variantFor } from "../ml/catalog.js";
 import { generateText } from "../ml/generate.js";
 import { decodeImage } from "../ml/image.js";
 import { intParam, numParam, sampling, stripThinking, visionMessages } from "../ml/prompts.js";
@@ -52,9 +55,11 @@ function promptOf(input: VisionTextInput): string {
 }
 
 export async function imageGenText(input: VisionTextInput, ctx: EdgeContext): Promise<EdgeSlotOutput<"image-gen-text">> {
+    const alt = VISION_TEXT_MODELS.find((m) => m !== QWEN35_VL && m.id === ctx.model);
+    if (alt) return (await import("./vlm-alt.js")).imageGenTextAlt(input, ctx, alt);
     return guard(ctx, async () => {
         const gpu = await requireWebGPU();
-        const model = pickModel(ctx.model, [QWEN35_VL]);
+        const model = pickModel(ctx.model, VISION_TEXT_MODELS);
         const variant = variantFor(model, gpu.f16);
         const params = ctx.params ?? {};
         const gen = input as Partial<SlotInput<"image-gen-text">>;
