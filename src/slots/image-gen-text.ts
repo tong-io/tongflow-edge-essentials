@@ -14,7 +14,7 @@ import { QWEN35_VL, pickModel, variantFor } from "../ml/catalog.js";
 import { generateText } from "../ml/generate.js";
 import { decodeImage } from "../ml/image.js";
 import { intParam, sampling, stripThinking, visionMessages } from "../ml/prompts.js";
-import { withModel } from "../ml/runtime.js";
+import { modelConfig, withModel } from "../ml/runtime.js";
 import { QWEN_BUDGET, smartResize, withMaxPixels } from "../ml/sizing.js";
 import { requireWebGPU } from "../ml/webgpu.js";
 import type { Asset, EdgeSlotOutput, SlotInput } from "../types.js";
@@ -70,6 +70,7 @@ export async function imageGenText(input: VisionTextInput, ctx: EdgeContext): Pr
                 load: async (tf, progress_callback) => {
                     const processor = await tf.AutoProcessor.from_pretrained(model.repo, { progress_callback });
                     const m = await tf.Qwen3_5ForConditionalGeneration.from_pretrained(model.repo, {
+                        config: await modelConfig(tf, model, variant, progress_callback),
                         dtype: variant.dtype,
                         device: "webgpu",
                         progress_callback,

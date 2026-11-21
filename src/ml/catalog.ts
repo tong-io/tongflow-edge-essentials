@@ -91,14 +91,53 @@ export const LFM25_350M: T3Model = {
 
 export const T3_MODELS = [QWEN35_VL, GLM_OCR, EMBEDDING_GEMMA_2, LFM25_350M] as const;
 
+/** `<session><suffix>.onnx`, the graph file name transformers.js loads for a dtype. */
+function graphName(session: string, dtype: Dtype): string {
+    return `${dtype === "fp32" ? session : `${session}_${dtype === "q8" ? "quantized" : dtype}`}.onnx`;
+}
+
 /** The ONNX files (graph + external data) a variant loads. */
 export function onnxFiles(variant: ModelVariant): string[] {
     const out: string[] = [];
     for (const [session, dtype] of Object.entries(variant.dtype)) {
-        const stem = dtype === "fp32" ? session : `${session}_${dtype === "q8" ? "quantized" : dtype}`;
-        out.push(`onnx/${stem}.onnx`, `onnx/${stem}.onnx_data`);
+        const name = graphName(session, dtype);
+        out.push(`onnx/${name}`, `onnx/${name}_data`);
     }
     return out;
+}
+
+/**
+ * transformers.js `use_external_data_format` for a variant: every graph we load has
+ * exactly one `.onnx_data` file next to it (what {@link onnxFiles} lists and the host mirrors).
+ *
+ * transformers.js only fetches (and hands onnxruntime-web) a graph's external data when
+ * `use_external_data_format` names that graph by its full file name
+ * (`embed_tokens_q4f16.onnx`) or by its session name (`embed_tokens`). The repos' own
+ * `config.json` cannot be relied on for that: GLM-OCR's lists `embed_tokens.onnx`,
+ * `vision_encoder.onnx`, … (the fp32 names), which match neither for q4/q4f16, so the
+ * session was created without its weights and onnxruntime-web failed with
+ * "Module.MountedFiles is not available". The catalog is the source of truth instead.
+ */
+export function externalDataFormat(variant: ModelVariant): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const [session, dtype] of Object.entries(variant.dtype)) out[graphName(session, dtype)] = 1;
+    return out;
+}
+
+/**
+ * A model config (`AutoConfig`) whose `transformers.js_config.use_external_data_format`
+ * covers the variant's graphs ({@link externalDataFormat}). Passed as `config` to
+ * `from_pretrained`, both the session loader and transformers.js' download-size probe
+ * see it. Entries already in the config are kept.
+ */
+export function withExternalData<C extends object>(config: C, variant: ModelVariant): C {
+    const c = config as { "transformers.js_config"?: { use_external_data_format?: unknown } };
+    const js = (c["transformers.js_config"] ??= {});
+    const prev = js.use_external_data_format;
+    // `true` / a number applies to every graph: already right for one data file each.
+    if (prev === true || (typeof prev === "number" && prev > 0)) return config;
+    js.use_external_data_format = { ...(prev && typeof prev === "object" ? prev : {}), ...externalDataFormat(variant) };
+    return config;
 }
 
 /** Every file a model needs under its repo dir, for both variants (what the host must mirror). */

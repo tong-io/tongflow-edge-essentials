@@ -10,12 +10,13 @@
 
 import type { EdgeContext } from "../context.js";
 import { EdgeError, errorMessage } from "../util/errors.js";
-import { type ModelVariant, type T3Model, onnxFiles } from "./catalog.js";
+import { type ModelVariant, type T3Model, onnxFiles, withExternalData } from "./catalog.js";
 import { DownloadProgress, type TransformersProgress } from "./progress.js";
 import { ORT_ASSET_DIR, loadTransformers } from "./transformers.js";
 import { checkQuota, describeQuota, storageEstimate } from "./webgpu.js";
 
 export type Transformers = typeof import("@huggingface/transformers");
+export type ModelConfig = Awaited<ReturnType<Transformers["AutoConfig"]["from_pretrained"]>>;
 
 /** The Cache API bucket transformers.js stores model files in (its default). */
 export const CACHE_KEY = "transformers-cache";
@@ -215,6 +216,19 @@ async function acquire<T>(tf: Transformers, ctx: EdgeContext, key: string, spec:
             l.promise.catch(() => {});
         }
     }
+}
+
+/**
+ * The model's config with the variant's external-data files declared
+ * (`withExternalData`); pass it as `config` to the model's `from_pretrained`.
+ */
+export async function modelConfig(
+    tf: Transformers,
+    model: T3Model,
+    variant: ModelVariant,
+    progress_callback: (p: TransformersProgress) => void,
+): Promise<ModelConfig> {
+    return withExternalData(await tf.AutoConfig.from_pretrained(model.repo, { progress_callback }), variant);
 }
 
 /** Free every loaded model (hosts can call this on memory pressure; tests use it). */

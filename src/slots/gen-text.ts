@@ -16,7 +16,7 @@ import type { EdgeContext } from "../context.js";
 import { LFM25_350M, pickModel, variantFor } from "../ml/catalog.js";
 import { generateText } from "../ml/generate.js";
 import { KEY_POINTS_SCHEMA, intParam, keyPointMessages, parseKeyPoints } from "../ml/prompts.js";
-import { withModel } from "../ml/runtime.js";
+import { modelConfig, withModel } from "../ml/runtime.js";
 import { requireWebGPU } from "../ml/webgpu.js";
 import type { EdgeSlotOutput, SlotInput } from "../types.js";
 import { EdgeError } from "../util/errors.js";
@@ -56,6 +56,7 @@ export async function genText(input: SlotInput<"gen-text">, ctx: EdgeContext): P
                 load: async (tf, progress_callback) => {
                     const tokenizer = await tf.AutoTokenizer.from_pretrained(model.repo, { progress_callback });
                     const m = await tf.AutoModelForCausalLM.from_pretrained(model.repo, {
+                        config: await modelConfig(tf, model, variant, progress_callback),
                         dtype: variant.dtype,
                         device: "webgpu",
                         progress_callback,

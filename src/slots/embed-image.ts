@@ -12,7 +12,7 @@
 import type { EdgeContext } from "../context.js";
 import { EMBEDDING_GEMMA_2, pickModel, variantFor } from "../ml/catalog.js";
 import { decodeImage } from "../ml/image.js";
-import { withModel } from "../ml/runtime.js";
+import { modelConfig, withModel } from "../ml/runtime.js";
 import { fitWithin } from "../ml/sizing.js";
 import { packVectors, truncateNormalize } from "../ml/tfv1.js";
 import { requireWebGPU } from "../ml/webgpu.js";
@@ -57,7 +57,7 @@ export async function embedImage(input: SlotInput<"embed-image">, ctx: EdgeConte
                 model,
                 variant,
                 load: async (tf, progress_callback) => {
-                    const config = await tf.AutoConfig.from_pretrained(model.repo, { progress_callback });
+                    const config = await modelConfig(tf, model, variant, progress_callback);
                     // Load only the text + vision parts (README: "Selective Encoder Loading").
                     (config as { audio_config?: unknown }).audio_config = null;
                     const processor = await tf.AutoProcessor.from_pretrained(model.repo, { progress_callback });

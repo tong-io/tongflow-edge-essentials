@@ -19,8 +19,40 @@ const noThirdPartyHosts = {
     },
 };
 
+/**
+ * transformers.js 4.3.2 serializes onnxruntime-web session creation and runs in the
+ * browser through module-level promise chains (`webInitChain = webInitChain.then(load)`).
+ * One rejected link poisons the chain: every later session / run in the worker rejects
+ * with the first error without even trying (one model failing to load made every
+ * other transformers.js model in the worker fail with that model's error). Let each
+ * link run whatever the previous one did; the caller still gets its own error.
+ */
+export const CHAINS = [
+    ["webInitChain = webInitChain.then(load)", "webInitChain = webInitChain.catch(() => {}).then(load)"],
+    ["webInferenceChain = webInferenceChain.then(run)", "webInferenceChain = webInferenceChain.catch(() => {}).then(run)"],
+] as const;
+let chainsPatched = false;
+export const unpoisonedOrtChains = {
+    name: "unpoisoned-ort-chains",
+    buildStart() {
+        chainsPatched = false;
+    },
+    transform(code: string, id: string) {
+        if (!/[\\/]@huggingface[\\/]transformers[\\/]dist[\\/]transformers\.web\.js$/.test(id)) return null;
+        for (const [from, to] of CHAINS) {
+            if (!code.includes(from)) throw new Error(`unpoisoned-ort-chains: "${from}" not found in ${id}; re-check the patch for this transformers.js version`);
+            code = code.replace(from, to);
+        }
+        chainsPatched = true;
+        return code;
+    },
+    buildEnd() {
+        if (!chainsPatched) throw new Error("unpoisoned-ort-chains: transformers.web.js was not bundled; the patch did not apply");
+    },
+};
+
 export default defineConfig({
-    plugins: [noThirdPartyHosts],
+    plugins: [noThirdPartyHosts, unpoisonedOrtChains],
     entry: ["src/index.ts", "src/embed-query.ts", "src/kb-host.ts"],
     format: "esm",
     platform: "browser",
