@@ -3,7 +3,24 @@ import { defineConfig } from "tsdown";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
+/**
+ * transformers.js ships HuggingFace and jsDelivr as defaults. The plugin always sets
+ * `env.remoteHost` (the model base) and onnxruntime-web's `wasmPaths`/`wasmBinary` (its
+ * own dist/assets/ort/) before use, so these are dead code; rewrite them anyway so no
+ * third-party host is reachable from the bundle.
+ */
+const noThirdPartyHosts = {
+    name: "no-third-party-hosts",
+    transform(code: string, id: string) {
+        if (!/[\\/]@huggingface[\\/]transformers[\\/]/.test(id)) return null;
+        return code
+            .replaceAll('remoteHost: "https://huggingface.co/"', 'remoteHost: "/models/"')
+            .replaceAll("https://cdn.jsdelivr.net/npm/onnxruntime-web@", "/models/onnxruntime-web@");
+    },
+};
+
 export default defineConfig({
+    plugins: [noThirdPartyHosts],
     entry: ["src/index.ts", "src/embed-query.ts", "src/kb-host.ts"],
     format: "esm",
     platform: "browser",
