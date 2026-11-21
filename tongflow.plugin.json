@@ -1,7 +1,7 @@
 {
     "plugin": {
         "name": "Edge essentials",
-        "description": "On-device document parsing, PDF page rendering, audio/first-frame extraction, language detection, knowledge-base chunking and embedding, and audio models (transcription, speech segmentation, speaker diarization, audio event tagging) in the browser, plus optional WebGPU nodes: image understanding (Qwen3.5-0.8B), GLM-OCR, image embeddings (EmbeddingGemma 2) and key-point extraction (LFM2.5-350M). Files never leave the device."
+        "description": "On-device document parsing, PDF page rendering, audio/first-frame extraction, language detection, knowledge-base chunking and embedding, and audio models (transcription, speech segmentation, speaker diarization, audio event tagging) and small vision/document models (OCR with PP-OCRv6, page orientation, layout, tables, shot splitting, object detection) in the browser, plus optional WebGPU nodes: image understanding (Qwen3.5-0.8B), GLM-OCR, image embeddings (EmbeddingGemma 2) and key-point extraction (LFM2.5-350M). Files never leave the device."
     },
     "runtime": "browser",
     "entry": "dist/index.js",
@@ -18,10 +18,15 @@
         { "nodeSlot": "image-describe", "method": "imageGenText", "models": ["qwen3.5-0.8b"] },
         { "nodeSlot": "embed-image", "method": "embedImage", "models": ["embeddinggemma-2"] },
         { "nodeSlot": "gen-text", "method": "genText", "models": ["lfm2.5-350m"] },
-        { "nodeSlot": "ocr-image", "method": "ocrImageGlm", "models": ["glm-ocr"] },
+        { "nodeSlot": "ocr-image", "method": "ocrImage", "models": ["pp-ocrv6-small", "pp-ocrv6-tiny", "glm-ocr"] },
         { "nodeSlot": "transcribe", "method": "transcribe", "models": ["sensevoice-small"] },
         { "nodeSlot": "vad-segment", "method": "vadSegment", "models": ["silero-vad-v5"] },
         { "nodeSlot": "diarize-speakers", "method": "diarizeSpeakers", "models": ["pyannote-campplus-zh"] },
-        { "nodeSlot": "audio-tag", "method": "audioTag", "models": ["ced-tiny"] }
+        { "nodeSlot": "audio-tag", "method": "audioTag", "models": ["ced-tiny"] },
+        { "nodeSlot": "image-orient", "method": "imageOrient", "models": ["pp-lcnet-doc-ori"] },
+        { "nodeSlot": "layout-detect", "method": "layoutDetect", "models": ["pp-doclayout-s", "pp-doclayout-m"] },
+        { "nodeSlot": "table-recognize", "method": "tableRecognize", "models": ["slanet-plus"] },
+        { "nodeSlot": "split-video", "method": "splitVideo", "models": ["transnetv2"] },
+        { "nodeSlot": "detect-objects", "method": "detectObjects", "models": ["dfine-nano", "dfine-nano-fp16"] }
     ]
 }

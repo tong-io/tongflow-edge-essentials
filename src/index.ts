@@ -20,6 +20,7 @@ import { kbWrite } from "./slots/kb-write.js";
 import { extractAudio, getFirstFrame } from "./slots/media.js";
 import { parseDocument } from "./slots/parse-document.js";
 import { renderPages } from "./slots/render-pages.js";
+import { detectObjects, imageOrient, layoutDetect, ocrImage, splitVideo, tableRecognize } from "./slots/vision.js";
 import type { EdgeSlotOutput, NodeSlot, SlotImpl, SlotInput } from "./types.js";
 import { applyEntryConfig, type EdgeConfig } from "./util/model-base.js";
 
@@ -113,6 +114,13 @@ export const methods = {
     vadSegment: bind("vad-segment", vadSegment),
     diarizeSpeakers: bind("diarize-speakers", diarizeSpeakers),
     audioTag: bind("audio-tag", audioTag),
+    // T1 vision/document. `ocr-image` is PP-OCRv6 (small, tiny) with GLM-OCR behind model "glm-ocr".
+    ocrImage: withModelAlternative<"ocr-image">(bind("ocr-image", ocrImage), "glm-ocr", bind("ocr-image", t3.ocrImageGlm)),
+    imageOrient: bind("image-orient", imageOrient),
+    layoutDetect: bind("layout-detect", layoutDetect),
+    tableRecognize: bind("table-recognize", tableRecognize),
+    splitVideo: bind("split-video", splitVideo),
+    detectObjects: bind("detect-objects", detectObjects),
 };
 
 /** Slot → method name, mirroring the manifest (kept in sync by a test). */
@@ -129,11 +137,16 @@ export const slots = {
     "image-describe": "imageGenText",
     "embed-image": "embedImage",
     "gen-text": "genText",
-    "ocr-image": "ocrImageGlm",
+    "ocr-image": "ocrImage",
     transcribe: "transcribe",
     "vad-segment": "vadSegment",
     "diarize-speakers": "diarizeSpeakers",
     "audio-tag": "audioTag",
+    "image-orient": "imageOrient",
+    "layout-detect": "layoutDetect",
+    "table-recognize": "tableRecognize",
+    "split-video": "splitVideo",
+    "detect-objects": "detectObjects",
 } as const satisfies Partial<Record<NodeSlot, keyof typeof methods>>;
 
 /** The slot implementations against the internal context (for hosts and tests that bring their own). */
@@ -151,6 +164,12 @@ export const impls = {
     vadSegment,
     diarizeSpeakers,
     audioTag,
+    ocrImage,
+    imageOrient,
+    layoutDetect,
+    tableRecognize,
+    splitVideo,
+    detectObjects,
 };
 
 export default defineEdgePlugin({ methods });

@@ -2,7 +2,7 @@
     "name": "tongflow-edge-essentials",
     "version": "0.1.0",
     "private": true,
-    "description": "Official TongFlow browser edge plugin: on-device document, media, language and knowledge-base (chunk, embed, write) nodes.",
+    "description": "Official TongFlow browser edge plugin: on-device document, media, language and knowledge-base (chunk, embed, write) and vision/document (OCR, orientation, layout, tables, shots, objects) nodes.",
     "license": "AGPL-3.0-only",
     "author": "tong-io",
     "repository": {

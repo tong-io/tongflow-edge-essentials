@@ -29,6 +29,12 @@ understanding, GLM-OCR, image embeddings and key-point extraction with 250–850
 | `vad-segment` | `vadSegment` | Audio → speech segments as WAV `segments` (Silero VAD) | same |
 | `diarize-speakers` | `diarizeSpeakers` | Audio → `segments` JSON `[{speaker,start,end}]` (pyannote + CAM++) | same |
 | `audio-tag` | `audioTag` | Audio → `tags` JSON `[{label,score}]` (CED-tiny, AudioSet) | same |
+| `ocr-image` | `ocrImage` | Image → reading-ordered `text` (PP-OCRv6 small; `tiny`, or `glm-ocr` on WebGPU) | onnxruntime-web 1.31.1, see [T1 vision/document nodes](#t1-visiondocument-nodes) |
+| `image-orient` | `imageOrient` | Image → upright page PNG (PP-LCNet doc_ori) | same |
+| `layout-detect` | `layoutDetect` | Page image → `layout` JSON + cropped `regions` in reading order (PP-DocLayout-S / -M) | same |
+| `table-recognize` | `tableRecognize` | Table image → `html` (SLANet_plus + PP-OCRv6) | same |
+| `split-video` | `splitVideo` | Video → one `video_parts` file per shot (TransNetV2; remuxed where the cut is a key frame) | same + Mediabunny 1.66.2 |
+| `detect-objects` | `detectObjects` | Image → `objects` JSON (D-FINE nano, COCO) | transformers.js 4.3.2 |
 
 `parse-document` dispatches by MIME type, then file extension, then the leading bytes (so a
 nameless upload still works):
@@ -189,6 +195,8 @@ the plugin can download: `[{id, source: "modelscope:<org>/<repo>", files, approx
 attribution?}]`. The weights-hosting job mirrors exactly those files under the model base. The audio
 entries also carry `checksums` (`{path: {size, sha256}}`, checked by the plugin before caching),
 `licenseUrl`, `slots` and `upstream` (the GitHub release asset each mirror was verified against).
+The T1 vision entries use the same format (`upstream` describes how each community conversion was
+checked); their table is in [T1 vision/document nodes](#t1-visiondocument-nodes).
 
 | id | Source | Files | Size | License |
 |---|---|---|---|---|
@@ -219,6 +227,116 @@ names are the `method` values in `tongflow.plugin.json`.
   node's branch stops. A cancelled run (`signal` aborted) rejects with the abort error instead.
 - Inputs over 100 MB are refused (the edge runtime's per-file cap). Binary outputs are returned
   as inline `Asset`s (`bytesBase64`); the engine stores them and hands file refs downstream.
+
+### T1 vision/document nodes
+
+Small models (2–31 MB each) on the shared onnxruntime-web **1.31.1** runtime (the same module and
+wasm as transformers.js and the audio nodes). **WASM by default; `_params.device: "webgpu"` uses
+WebGPU** when the worker has an adapter (a graph WebGPU cannot build falls back to WASM). WebGPU
+is opt-in because in headless Chromium (Metal through ANGLE) the first WebGPU session created in
+the module worker never settled, while it worked on the main thread and after a WASM session; at
+these model sizes WASM is fast (timings below). All pre/post-processing is TypeScript on OffscreenCanvas /
+ImageBitmap in the module worker: no OpenCV.js, no DOM. PaddleOCR.js was not used: it needs
+OpenCV.js and a DOM canvas.
+
+| Slot | Method | Models (`models`, default first) | Output |
+|---|---|---|---|
+| `ocr-image` | `ocrImage` | `pp-ocrv6-small`, `pp-ocrv6-tiny`, `glm-ocr` (T3, WebGPU) | `text`: lines in reading order (top→bottom, pieces of a line left→right; no space between CJK pieces) |
+| `image-orient` | `imageOrient` | `pp-lcnet-doc-ori` | `image`: the page turned upright (0/90/180/270°), PNG. An upright PNG passes through unchanged. |
+| `layout-detect` | `layoutDetect` | `pp-doclayout-s`, `pp-doclayout-m` | `layout`: JSON `[{label, score, box: [x1, y1, x2, y2]}]` in reading order; `regions`: one cropped PNG per entry, same order (`x-expand-each`) |
+| `table-recognize` | `tableRecognize` | `slanet-plus` | `html`: `<table>…</table>`, structure from SLANet_plus, cell text from PP-OCRv6 small |
+| `split-video` | `splitVideo` | `transnetv2` | `video_parts`: one video per shot, same container |
+| `detect-objects` | `detectObjects` | `dfine-nano` (int8), `dfine-nano-fp16` | `objects`: JSON `[{label, score, box: [x1, y1, x2, y2]}]` (COCO labels, pixels, best first) |
+
+**`ocr-image`.** PP-OCRv6 det (DB) → crop → rec (CTC), as PaddleOCR/PaddleX do it: det input
+scaled so the short side is ≥ 64 and the long side ≤ 2048 (`_params.det_max_side`), multiples of 32;
+DB thresholds from the model's `inference.yml` (0.2 / 0.45 / unclip 1.4); 8-connected regions →
+minimum-area rectangles (rotating calipers) → affine crop; boxes taller than 1.5× their width are
+turned to horizontal; rec at height 48, batched by aspect ratio; the character dictionary is read
+from the rec repo's `inference.yml`, so it always matches the weights. Lines below 0.5 confidence
+are dropped (`_params.drop_score`). `_params.textline_orientation: true` adds the 1 MB
+PP-LCNet text-line orientation classifier for upside-down lines; it is off by default because it
+flipped short table cells ("+3%" → "%ε+") in tests, and page rotation is `image-orient`'s job.
+`glm-ocr` routes to T3's GLM-OCR through `withModelAlternative`.
+
+**`layout-detect`.** PP-DocLayout-S (480², default) or -M (640²), the Paddle graph with fused NMS
+(`image` + `scale_factor` in, boxes in source pixels out), threshold 0.5 (`_params.threshold`),
+cross-class duplicates dropped. Reading order: running headers first; wide boxes (titles,
+abstracts) split the page into bands; inside a band columns are read left→right, each column
+top→bottom; page numbers and footers last. Only a community ONNX conversion exists
+(`Liyulingyue/PP-DocLayout-{S,M}-ONNX`); it was verified here on a rendered two-column A4 report
+(title, abstract, headings, text, table 0.92, chart, figure caption, page number all found, boxes
+on the content) and its sha256 is pinned in `models.json`.
+
+**`table-recognize`.** SLANet_plus on the image scaled to a 488 px long side and padded to 488²;
+structure tokens decoded with PaddleOCR's `merge_no_span_structure` dictionary; cell polygons are
+normalized to the padded square. OCR boxes are assigned to cells by PaddleOCR's `TableMatch`
+rule (best IoU, then corner distance). Feed it a table crop, e.g. a `layout-detect` region labelled
+`table`.
+
+**`split-video`.** Mediabunny decodes the primary video track and samples 48×27 frames at
+**10 fps** (`_params.fps`; at 4 fps TransNetV2 missed one cut and invented others on fast-moving
+test content), TransNetV2 runs over 100-frame windows (25-frame context, the reference padding),
+the single-frame head is thresholded at `threshold` (ABI input, default 0.5). Each cut is then
+refined to the exact frame by decoding the frames between the two samples, and snapped to a key
+frame within one frame. Parts are cut with a Mediabunny `Conversion`: **copied without
+re-encoding** when the cut is on a key frame (encoders usually place one at a scene change), else
+re-encoded with WebCodecs from the cut; if the browser cannot encode the codec, the part is
+copied from the preceding key frame instead. If TransNetV2 is not mirrored or fails to load, a
+colour-histogram frame-difference detector runs instead (the progress message says so). One shot
+returns the input unchanged as the single part.
+
+**`detect-objects`.** D-FINE nano through transformers.js's `object-detection` pipeline (the shared
+`ml/transformers.ts` runtime). Its sigmoid scores are modest (the cat test photo scores 0.6–0.7),
+so the default threshold is 0.35 (`_params.threshold`); near-identical boxes of one label
+(IoU ≥ 0.7) are merged. `dfine-nano-fp16` is faster on WASM and found more in the tests below.
+
+**Measured** (headless Chromium, Apple Silicon, WASM single-threaded, models served from
+`EDGE_MODELS_DIR`; "cold" = first call in a fresh worker, including fetch + session creation):
+
+| Call | Time |
+|---|---|
+| `ocr-image` small, 900×360 synthetic scan (4 lines), cold: ort wasm + 31 MB of models + sessions + run | 1.7 s |
+| `ocr-image` small, same image, warm | 0.9 s |
+| `ocr-image` tiny, same image, cold / warm | 0.3 s / 0.22 s |
+| `ocr-image` small, A4 page rendered at 150 DPI (1240×1754, 13 lines), warm | 3.6 s |
+| `image-orient`, A4 page, cold / warm | 70 ms / 40 ms |
+| `layout-detect` S / M, A4 page, cold | 0.19 s / 0.84 s |
+| `table-recognize`, 600×240 ruled table, cold (SLANet + OCR) | 0.9 s |
+| `table-recognize` on the layout's 4×5 table crop | 1.8 s |
+| `split-video`, 6 s 240×136 MP4, 3 shots, cold (TransNetV2 31 MB + decode + 3 remuxes) | 5.6 s |
+| `split-video`, same as one-key-frame VP9 WebM (3 re-encoded parts) | 5.5 s |
+| `detect-objects` int8, 451×300 photo, cold / 512×512 warm | 1.2 s / 0.65 s |
+| `detect-objects` fp16, 451×300 photo, cold / 512×512 warm | 0.8 s / 0.28 s |
+
+Recognition quality in these runs: the synthetic scan and the PDF page were read without errors by
+`small` (`tiny` dropped one space); `table-recognize` reproduced every cell of both tables except
+one OCR slip ("5%" read as "5%%"); D-FINE int8 found the cat (0.69) but not the astronaut that
+fp16 finds (person 0.44), so `dfine-nano-fp16` is the better choice where 3.4 MB more download is
+acceptable.
+
+**Models** (all from ModelScope; mirror the repos 1:1 under the model base):
+
+| Id (`models.json`) | Repo | Size | License |
+|---|---|---|---|
+| `pp-ocrv6-small-det` / `-rec` | `PaddlePaddle/PP-OCRv6_small_det_onnx`, `PaddlePaddle/PP-OCRv6_small_rec_onnx` | 9.9 + 21.3 MB | Apache-2.0 |
+| `pp-ocrv6-tiny-det` / `-rec` | `PaddlePaddle/PP-OCRv6_tiny_det_onnx`, `PaddlePaddle/PP-OCRv6_tiny_rec_onnx` | 1.8 + 4.6 MB | Apache-2.0 |
+| `pp-lcnet-textline-ori` (optional) | `PaddlePaddle/PP-LCNet_x0_25_textline_ori_onnx` | 1.0 MB | Apache-2.0 |
+| `pp-lcnet-doc-ori` | `PaddlePaddle/PP-LCNet_x1_0_doc_ori_onnx` | 6.8 MB | Apache-2.0 |
+| `pp-doclayout-s` / `-m` | `Liyulingyue/PP-DocLayout-S-ONNX`, `Liyulingyue/PP-DocLayout-M-ONNX` (community conversions, sha256-pinned) | 4.9 / 23.5 MB | Apache-2.0 |
+| `slanet-plus` | `PaddlePaddle/SLANet_plus_onnx` | 7.8 MB | Apache-2.0 |
+| `transnetv2` | `q502892879/transnetv2-onnx` (community export) | 31.3 MB | MIT |
+| `dfine-nano` / `dfine-nano-fp16` | `onnx-community/dfine_n_coco-ONNX` (`onnx/model_int8.onnx` / `onnx/model_fp16.onnx` + configs) | 4.5 / 7.9 MB | Apache-2.0 |
+
+Every T1 entry in `models.json` carries a `sha256` per file. Raw-ORT files are checked against it
+on a fresh download and kept in the Cache API bucket `tongflow-edge-models`; transformers.js keeps
+D-FINE in `transformers-cache`. A model base that answers a missing file with an HTML page (an SPA
+fallback) is reported as "not mirrored", not parsed. Attribution: PP-OCRv6, PP-LCNet,
+PP-DocLayout and SLANet_plus by PaddlePaddle ([PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE),
+Apache-2.0), PP-DocLayout ONNX conversion by Liyulingyue; TransNetV2 © 2020 Tomáš Souček
+([MIT](https://github.com/soCzech/TransNetV2/blob/master/LICENSE)), ONNX export by q502892879;
+D-FINE by Peterande et al. ([Apache-2.0](https://github.com/Peterande/D-FINE/blob/master/LICENSE)),
+ONNX by onnx-community.
 
 ### T3 WebGPU nodes
 
@@ -288,12 +406,10 @@ lands within one token.
 
 The scanner accepts exactly one manifest entry per `nodeSlot` (a second entry for the same slot is
 rejected: `nodeSlot … is declared more than once`), so an alternative implementation is an extra
-**model** in the slot's entry, and the method picks by `ctx.model`. Until the default PP-OCR
-implementation of `ocr-image` lands, this branch declares
-`{"nodeSlot": "ocr-image", "method": "ocrImageGlm", "models": ["glm-ocr"]}`. Once both exist the
-entry becomes `"models": [<PP-OCR ids>…, "glm-ocr"]` with the default method, which routes
-`glm-ocr` here with the exported `withModelAlternative(ocrImage, "glm-ocr", ocrImageGlm)`.
-`ocrImageGlm` itself accepts only `glm-ocr` (or no model).
+**model** in the slot's entry, and the method picks by `ctx.model`. `ocr-image` is
+`{"nodeSlot": "ocr-image", "method": "ocrImage", "models": ["pp-ocrv6-small", "pp-ocrv6-tiny", "glm-ocr"]}`:
+the default method is PP-OCRv6, and `withModelAlternative(ocrImage, "glm-ocr", ocrImageGlm)` routes
+`glm-ocr` here. `ocrImageGlm` stays exported as its own method and accepts only `glm-ocr` (or no model).
 
 #### TFV1 vector files
 
@@ -414,6 +530,9 @@ needs. Gzip transfer on first use, chunks included:
 | `dist/kb-host.js` / `dist/embed-query.js` (host entries) | 0.6 kB / 0.65 kB |
 | any T3 node (WebGPU) | slot glue ≈ 6 kB + the same transformers.js / onnxruntime-web / ort wasm, then the model (250–850 MB) |
 | gen-text | + structured output ≈ 15 kB |
+| any T1 vision node | slot glue 5.3 kB (`impl`) + geometry 2.6 kB + model registry 5.5 kB + hub 1.7 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared), then the model: OCR small 31 MB / tiny 6.3 MB, orientation 6.8 MB, layout 4.9 / 23.5 MB, table 7.8 MB + OCR small |
+| split-video | + split glue 3 kB + Mediabunny 195 kB + TransNetV2 31 MB |
+| detect-objects | glue 1 kB + transformers.js 123 kB + the shared runtime + D-FINE 4.5 MB (int8) / 7.9 MB (fp16) |
 | any T2 audio node | audio pipeline 12 kB + Mediabunny 196 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared with transformers.js), then the models: SenseVoice 240 MB, VAD 2.3 MB, diarization 34 MB, CED 6.2 MB |
 
 `dist/` is committed: the scanner requires the manifest's `entry` to exist, and hosts load the
@@ -446,6 +565,18 @@ serves the test page cross-origin isolated (threaded onnxruntime-web). Timings l
 ```bash
 EDGE_MODELS_DIR=../.models-cache npm run test:browser   # files from modelscope.cn/models/<org>/<repo>/resolve/master/<path>
 ```
+
+**T1 vision tests** (`test/browser/vision.test.ts`): without `EDGE_MODELS_DIR` they check only the
+model-free paths (a model base that does not hold the files fails the node clearly; an unknown OCR
+model is rejected) and print that the real-model part is skipped. With it they run every T1 slot
+on real weights: OCR small/tiny on a synthetic Chinese/English scan and on a rendered PDF page,
+upside-down text with `textline_orientation`, orientation of a page turned 90/180/270°, layout S/M
+on a rendered two-column report (`test/fixtures/paper.pdf`, from `scripts/gen-vision-fixtures.mjs`)
+chained into `table-recognize`, a ruled table, shot splitting of a key-framed MP4 (parts copied)
+and a one-key-frame WebM (parts re-encoded), and D-FINE on two photos. Node tests
+(`test/node/vision.test.ts`) cover the geometry, DB post-processing, CTC decoding, YAML dictionaries,
+SLANet decoding and cell matching, TransNetV2 windows and scenes, the frame-difference fallback,
+layout ordering, and that the manifest, `models.json` and the model catalog agree.
 
 **T3 tests never download a model.** In Node they cover the pure parts (prompts, JSON salvage,
 image sizing, TFV1, progress throttling, quota and WebGPU checks) and the runtime glue against a
@@ -519,13 +650,19 @@ Model weights are not part of this package; they are downloaded from the host's 
 licenses are in the [T3 models table](#t3-webgpu-nodes) and the [T2 audio section](#t2-audio-nodes);
 LFM2.5-350M's and the FunASR model license's full texts are in `licenses/`. Attribution for the about page: "Qwen3.5-0.8B by the Qwen team, Alibaba Cloud
 (Apache-2.0)", "GLM-OCR by Zhipu AI (MIT)", "EmbeddingGemma 2 by Google DeepMind (Apache-2.0,
-Gemma Prohibited Use Policy)", "LFM2.5-350M by Liquid AI, Inc. (LFM Open License v1.0)".
+Gemma Prohibited Use Policy)", "LFM2.5-350M by Liquid AI, Inc. (LFM Open License v1.0)",
+"PP-OCRv6, PP-LCNet, PP-DocLayout and SLANet_plus by PaddlePaddle (Apache-2.0)", "TransNetV2 © 2020
+Tomáš Souček (MIT)", "D-FINE by Peterande et al. (Apache-2.0)"; the T1 entries are in the
+[T1 models table](#t1-visiondocument-nodes).
 
 Avoided on purpose: MuPDF.js and scribe.js (AGPL-3.0), the ffmpeg.wasm core (GPL-2.0+) and the
 Ultralytics models (AGPL-3.0).
 
 Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (Apache-2.0). The audio
-fixtures in `test/fixtures/audio/` were synthesized for this repo with macOS `say` (voices Tingting and Reed).
+fixtures in `test/fixtures/audio/` were synthesized for this repo with macOS `say` (voices Tingting and Reed). The
+vision fixtures `cat.jpg` and `astronaut.jpg` are scikit-image sample photos (chelsea: CC0, Stefan van
+der Walt; astronaut: NASA, public domain); `paper.pdf`, `shots.mp4` and `shots-gop.webm` are generated
+by `scripts/gen-vision-fixtures.mjs` (Chromium print, ffmpeg test sources).
 
 ---
 
@@ -551,6 +688,12 @@ fixtures in `test/fixtures/audio/` were synthesized for this repo with macOS `sa
 | `vad-segment` | `vadSegment` | 音频切成语音段 WAV(`segments`,Silero VAD) | 同上 |
 | `diarize-speakers` | `diarizeSpeakers` | 音频输出说话人分段 JSON `[{speaker,start,end}]`(pyannote + CAM++) | 同上 |
 | `audio-tag` | `audioTag` | 音频输出事件标签 JSON `[{label,score}]`(CED-tiny,AudioSet) | 同上 |
+| `ocr-image` | `ocrImage` | 图片转按阅读顺序的 `text`(PP-OCRv6 small;可换 `tiny`,WebGPU 下可换 `glm-ocr`) | onnxruntime-web 1.31.1,见下方「T1 视觉/文档节点」 |
+| `image-orient` | `imageOrient` | 图片转正,输出 PNG(PP-LCNet doc_ori) | 同上 |
+| `layout-detect` | `layoutDetect` | 页面图输出 `layout` JSON 和按阅读顺序裁好的 `regions`(PP-DocLayout-S/-M) | 同上 |
+| `table-recognize` | `tableRecognize` | 表格图转 `html`(SLANet_plus + PP-OCRv6) | 同上 |
+| `split-video` | `splitVideo` | 视频按镜头切成多个 `video_parts`(TransNetV2;切点在关键帧上时直接转封装) | 同上,加 Mediabunny 1.66.2 |
+| `detect-objects` | `detectObjects` | 图片输出 `objects` JSON(D-FINE nano,COCO 类别) | transformers.js 4.3.2 |
 
 `parse-document` 按以下顺序判断格式:先看 MIME,再看扩展名,最后看文件头字节。没有文件名的上传也能识别。
 
@@ -666,6 +809,45 @@ transformers.js **4.3.2** + onnxruntime-web **1.31.1**(所有 ML 节点共用这
 - **失败与取消**:失败时返回 `{ success: false, error }`,只中止本节点所在的支路。运行被取消(`signal` 触发 abort)时直接抛出 abort 错误。
 - 超过 100 MB 的输入会被拒绝(边缘运行时的单文件上限)。二进制输出以内联 `Asset`(`bytesBase64`)返回,由引擎存储,再以文件引用传给下游。
 
+### T1 视觉/文档节点
+
+小模型(每个 2–31 MB),跑在共享的 onnxruntime-web **1.31.1** 上(与 transformers.js、音频节点同一模块、同一个 wasm)。
+**默认 WASM;`_params.device: "webgpu"` 且 worker 有 GPU adapter 时用 WebGPU**(WebGPU 建不了的图自动退回 WASM)。WebGPU 需显式开启:
+无头 Chromium(ANGLE/Metal)里,module worker 中第一个 WebGPU session 一直不返回(主线程正常,先建过 WASM session 后也正常);
+这些模型在 WASM 上已经够快。前后处理全部是 TypeScript,在 module worker 里用
+OffscreenCanvas/ImageBitmap 完成,不用 OpenCV.js,不碰 DOM。没有用 PaddleOCR.js,因为它依赖 OpenCV.js 和 DOM canvas。
+
+| Slot | 方法 | 模型(`models`,默认在前) | 输出 |
+|---|---|---|---|
+| `ocr-image` | `ocrImage` | `pp-ocrv6-small`、`pp-ocrv6-tiny`、`glm-ocr`(T3,WebGPU) | `text`:按阅读顺序的文本行(自上而下,行内自左向右;中文片段之间不加空格) |
+| `image-orient` | `imageOrient` | `pp-lcnet-doc-ori` | `image`:转正(0/90/180/270°)后的页面 PNG;本来就正的 PNG 原样返回 |
+| `layout-detect` | `layoutDetect` | `pp-doclayout-s`、`pp-doclayout-m` | `layout`:JSON `[{label, score, box: [x1, y1, x2, y2]}]`,按阅读顺序;`regions`:每项一张裁剪 PNG,顺序相同(`x-expand-each`) |
+| `table-recognize` | `tableRecognize` | `slanet-plus` | `html`:`<table>…</table>`,结构来自 SLANet_plus,单元格文字来自 PP-OCRv6 small |
+| `split-video` | `splitVideo` | `transnetv2` | `video_parts`:每个镜头一个视频,容器不变 |
+| `detect-objects` | `detectObjects` | `dfine-nano`(int8)、`dfine-nano-fp16` | `objects`:JSON `[{label, score, box: [x1, y1, x2, y2]}]`(COCO 类别,像素坐标,按分数降序) |
+
+- **OCR**:检测(DB)→ 裁剪 → 识别(CTC),与 PaddleOCR/PaddleX 一致。检测输入短边 ≥ 64、长边 ≤ 2048(`_params.det_max_side`),
+  取 32 的倍数;DB 阈值读自模型的 `inference.yml`;识别高 48,按宽高比分批;字典直接从识别模型仓库的 `inference.yml` 读取,保证与权重一致。
+  `_params.textline_orientation: true` 才启用 1 MB 的文本行方向分类(默认关:测试中它把表格里的短单元格翻转了,整页方向交给 `image-orient`)。
+  模型选 `glm-ocr` 时经 `withModelAlternative` 转给 T3 的 GLM-OCR。
+- **版面**:PP-DocLayout-S(480²,默认)或 -M(640²),阈值 0.5(`_params.threshold`)。阅读顺序:页眉在前;宽块(标题、摘要)把页面分成横带,
+  带内按栏从左到右、栏内自上而下;页码、页脚最后。S/M 只有社区 ONNX 转换件(`Liyulingyue/PP-DocLayout-{S,M}-ONNX`),已在渲染出的双栏 A4 报告上
+  验证(标题、摘要、小标题、正文、表格 0.92、图、图题、页码都检出,框贴合内容),`models.json` 里钉死了 sha256。
+- **表格**:SLANet_plus 输入长边缩放到 488 并补齐到 488²;结构 token 按 PaddleOCR 的 `merge_no_span_structure` 字典解码;单元格多边形相对补齐后的方图归一化。
+  OCR 框按 PaddleOCR `TableMatch` 规则(IoU 优先,再看角点距离)分配到单元格。输入应是表格裁剪图,例如 `layout-detect` 标为 `table` 的区域。
+- **切镜头**:Mediabunny 解码主视频轨,按 **10 fps** 采样 48×27 帧(`_params.fps`;4 fps 时 TransNetV2 在快速运动的测试素材上漏了一个切点、又多报了几个),
+  TransNetV2 以 100 帧窗口推理,单帧头按 `threshold`(ABI 输入,默认 0.5)判定;再解码两个采样点之间的帧把切点精确到帧,并在一帧之内对齐关键帧。
+  切点落在关键帧上时**直接转封装、不重编码**(编码器通常会在场景切换处放关键帧),否则用 WebCodecs 从切点重编码;浏览器编不了该编码时改为从前一个关键帧起拷贝。
+  TransNetV2 未托管或加载失败时改用颜色直方图帧差检测(进度消息会说明)。只有一个镜头时原样返回输入。
+- **目标检测**:D-FINE nano 走 transformers.js 的 `object-detection` pipeline(共享的 `ml/transformers.ts`)。它的 sigmoid 分数偏低(测试猫图 0.6–0.7),
+  默认阈值 0.35(`_params.threshold`),同类且 IoU ≥ 0.7 的重复框合并。`dfine-nano-fp16` 在 WASM 上更快,测试中检出也更多
+(int8 漏检了宇航员图里的人,fp16 检出 0.44),能接受多 3.4 MB 下载时建议用 fp16。
+
+实测耗时与模型清单见英文部分。T1 的每个 `models.json` 条目都给每个文件记了 `sha256`:直接用 ORT 的模型首次下载时校验,存进 Cache API 的
+`tongflow-edge-models`;D-FINE 由 transformers.js 存进 `transformers-cache`。model base 对缺失文件返回 HTML 页(SPA 兜底)时,报"未托管"而不是去解析。
+署名:PP-OCRv6、PP-LCNet、PP-DocLayout、SLANet_plus 由 PaddlePaddle 发布(Apache-2.0),PP-DocLayout 的 ONNX 转换由 Liyulingyue 完成;
+TransNetV2 © 2020 Tomáš Souček(MIT),ONNX 导出者 q502892879;D-FINE 由 Peterande 等人发布(Apache-2.0),ONNX 由 onnx-community 转换。
+
 ### T3 WebGPU 节点
 
 可选的真模型节点,**只在 WebGPU 下可用**。每个方法先检查 `self.navigator.gpu` 和 GPU adapter,缺任何一个就明确报错
@@ -707,9 +889,9 @@ LFM2.5-350M q4f16 对约 200 字的中文合同条款做 `gen-text`,首次 6–1
 约 100 个 token、约 45 token/s;模型常驻时 2.3 s,首个 token 0.24 s;新 worker 从 Cache API 加载 2.5 s;取消在一个 token 内生效。
 
 **备选实现**:scanner 规定每个 `nodeSlot` 只能有一条 manifest 记录(重复会被拒:`declared more than once`),所以备选实现是该 slot
-记录里多一个**模型**,方法按 `ctx.model` 分派。默认的 PP-OCR 实现合入之前,本分支先声明
-`{"nodeSlot": "ocr-image", "method": "ocrImageGlm", "models": ["glm-ocr"]}`;两者都在时改成默认方法加 `"models": [<PP-OCR>…, "glm-ocr"]`,
-默认方法用导出的 `withModelAlternative(ocrImage, "glm-ocr", ocrImageGlm)` 把 `glm-ocr` 转到这里。
+记录里多一个**模型**,方法按 `ctx.model` 分派。`ocr-image` 现在是
+`{"nodeSlot": "ocr-image", "method": "ocrImage", "models": ["pp-ocrv6-small", "pp-ocrv6-tiny", "glm-ocr"]}`:默认方法是 PP-OCRv6,
+`withModelAlternative(ocrImage, "glm-ocr", ocrImageGlm)` 把 `glm-ocr` 转到 GLM-OCR。
 
 **TFV1 向量文件**:`<图片名>.tfv1`,`application/octet-stream`,小端:魔数 `"TFV1"`、`u32 dims`、`u32 count`,之后是
 `count × dims` 个 float32(行优先),即 scanall `@scanall/kb` 读取的格式。
@@ -791,6 +973,8 @@ snakers4 的 v5.1.2)、CED 字节一致;CAM++ 是较早的导出,GitHub 上的�
 - 向量化:transformers.js 123 kB + onnxruntime-web 42 kB,ort wasm gzip 7.1 MB(原始 28.7 MB),另加模型 24 MB(bge-base 为 103 MB);
 - 切块 1.8 kB,kb-write 0.9 kB,宿主入口 `kb-host.js` / `embed-query.js` 各约 0.6 kB;
 - 老格式 91 kB,另加 wasm 约 17.3 MB;
+- T1 视觉节点:glue 约 15 kB 加共享的 onnxruntime-web 42 kB 与 ort wasm,再加模型(OCR small 31 MB/tiny 6.3 MB,方向 6.8 MB,版面 4.9/23.5 MB,表格 7.8 MB);
+  切镜头另加 Mediabunny 195 kB 和 TransNetV2 31 MB;目标检测另加 transformers.js 123 kB 和 D-FINE 4.5 MB(fp16 7.9 MB);
 - T3 节点:同一套 transformers.js / onnxruntime-web / ort wasm,再加模型本身(250–850 MB);`gen-text` 另加结构化输出约 15 kB。
 
 `dist/` 会提交进仓库:scanner 要求 manifest 的 `entry` 文件存在,宿主也是克隆仓库后直接加载。改动源码后要重新构建。
@@ -841,6 +1025,6 @@ model base,目录挂在 `/models/`,Chromium 加 `--enable-unsafe-webgpu` 启动(
 - **Mediabunny**:MPL-2.0,属于文件级 copyleft。插件未修改其源码,若修改则须按 MPL-2.0 公开改动的文件。
 
 T3 运行时新增:transformers.js 4.3.2(Apache-2.0)、transformers-structured-output 4.3.2(Apache-2.0)、onnxruntime-web 1.31.1(MIT,
-声明见 `licenses/onnxruntime-web-MIT.txt`)。模型权重不在本包内,由宿主的 model base 提供;LFM2.5-350M 的许可证全文在 `licenses/`。
+声明见 `licenses/onnxruntime-web-MIT.txt`)。模型权重不在本包内,由宿主的 model base 提供;LFM2.5-350M 的许可证全文在 `licenses/`。T1 视觉模型均为 Apache-2.0(PaddlePaddle 各模型、D-FINE)或 MIT(TransNetV2),署名见上文「T1 视觉/文档节点」。
 
 完整列表见英文部分的表格。以下项目刻意未用:MuPDF.js 和 scribe.js(AGPL-3.0)、ffmpeg.wasm core(GPL-2.0+)、Ultralytics 系模型(AGPL-3.0)。

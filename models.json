@@ -260,5 +260,330 @@
             "verified": "2026-11-21: model.int8.onnx and class_labels_indices.csv inside the archive are byte-identical (SHA-256) to the ModelScope repo (k2-fsa's own ModelScope organization)"
         },
         "notes": "Only the weights are used. The CED training code (RicherMans/CED) is GPL-3.0 and is not bundled; the front end here is a port of sherpa-onnx (Apache-2.0)."
+    },
+    {
+        "id": "pp-ocrv6-small-det",
+        "source": "modelscope:PaddlePaddle/PP-OCRv6_small_det_onnx",
+        "files": [
+            "inference.onnx",
+            "inference.yml"
+        ],
+        "checksums": {
+            "inference.onnx": {
+                "size": 9880512,
+                "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+            },
+            "inference.yml": {
+                "size": 885,
+                "sha256": "193f435274bf9f0b5f71a929bbfbcf148282df7e633b34e7c373e8f44741b516"
+            }
+        },
+        "slots": [
+            "ocr-image",
+            "table-recognize"
+        ],
+        "approxMB": 9.9,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE",
+        "attribution": "PP-OCRv6 by PaddlePaddle (PaddleOCR), https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE"
+    },
+    {
+        "id": "pp-ocrv6-small-rec",
+        "source": "modelscope:PaddlePaddle/PP-OCRv6_small_rec_onnx",
+        "files": [
+            "inference.onnx",
+            "inference.yml"
+        ],
+        "checksums": {
+            "inference.onnx": {
+                "size": 21159378,
+                "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
+            },
+            "inference.yml": {
+                "size": 150579,
+                "sha256": "ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1"
+            }
+        },
+        "slots": [
+            "ocr-image",
+            "table-recognize"
+        ],
+        "approxMB": 21.3,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE",
+        "attribution": "PP-OCRv6 by PaddlePaddle (PaddleOCR), https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE"
+    },
+    {
+        "id": "pp-ocrv6-tiny-det",
+        "source": "modelscope:PaddlePaddle/PP-OCRv6_tiny_det_onnx",
+        "files": [
+            "inference.onnx",
+            "inference.yml"
+        ],
+        "checksums": {
+            "inference.onnx": {
+                "size": 1780590,
+                "sha256": "193bab7a04fca699a6c82e6abb5b81bdb28177f0abd4062552b04908dafb19f8"
+            },
+            "inference.yml": {
+                "size": 883,
+                "sha256": "3ac018be6f97499a08faa3bbdeb33640968d9307f6736d152902747a9f259593"
+            }
+        },
+        "slots": [
+            "ocr-image"
+        ],
+        "approxMB": 1.8,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE",
+        "attribution": "PP-OCRv6 by PaddlePaddle (PaddleOCR), https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE"
+    },
+    {
+        "id": "pp-ocrv6-tiny-rec",
+        "source": "modelscope:PaddlePaddle/PP-OCRv6_tiny_rec_onnx",
+        "files": [
+            "inference.onnx",
+            "inference.yml"
+        ],
+        "checksums": {
+            "inference.onnx": {
+                "size": 4462639,
+                "sha256": "9ef676d6ed3c88256a2d92c640c44f25b0c40947e111b14b8be8f594091563e6"
+            },
+            "inference.yml": {
+                "size": 55571,
+                "sha256": "66170210bad538e83fff3c4a3867e547d6bf20b50d64b20347c4b913f3034ea1"
+            }
+        },
+        "slots": [
+            "ocr-image"
+        ],
+        "approxMB": 4.6,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE",
+        "attribution": "PP-OCRv6 by PaddlePaddle (PaddleOCR), https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE"
+    },
+    {
+        "id": "pp-lcnet-textline-ori",
+        "source": "modelscope:PaddlePaddle/PP-LCNet_x0_25_textline_ori_onnx",
+        "files": [
+            "inference.onnx",
+            "inference.yml"
+        ],
+        "checksums": {
+            "inference.onnx": {
+                "size": 1019454,
+                "sha256": "94a6a0a0425f2b5f08b5df72086f2d72abe40f1d22f6d12d2cd83674f11f2ff3"
+            },
+            "inference.yml": {
+                "size": 736,
+                "sha256": "d9a0a3fc7c5c0ae416dbb565d63a32cb4692f05aee1bf7b677b9dd571adaa759"
+            }
+        },
+        "slots": [
+            "ocr-image"
+        ],
+        "approxMB": 1.0,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE",
+        "attribution": "PP-LCNet textline orientation by PaddlePaddle (PaddleOCR), https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE",
+        "notes": "optional: only with _params.textline_orientation = true"
+    },
+    {
+        "id": "pp-lcnet-doc-ori",
+        "source": "modelscope:PaddlePaddle/PP-LCNet_x1_0_doc_ori_onnx",
+        "files": [
+            "inference.onnx",
+            "inference.yml"
+        ],
+        "checksums": {
+            "inference.onnx": {
+                "size": 6788069,
+                "sha256": "af9a0a4f317ff0709ce752067807f819cb15d883f8ecad89f28df1c6ee2d9c92"
+            },
+            "inference.yml": {
+                "size": 766,
+                "sha256": "9e195eb729a8173588cd0e8a852c8b373aa606e79e77b4ac7d8346f5426caf26"
+            }
+        },
+        "slots": [
+            "image-orient"
+        ],
+        "approxMB": 6.8,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE",
+        "attribution": "PP-LCNet document orientation by PaddlePaddle (PaddleOCR), https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE"
+    },
+    {
+        "id": "pp-doclayout-s",
+        "source": "modelscope:Liyulingyue/PP-DocLayout-S-ONNX",
+        "files": [
+            "inference.onnx",
+            "inference.yml"
+        ],
+        "checksums": {
+            "inference.onnx": {
+                "size": 4914918,
+                "sha256": "c2336493a0a13cd9b9b457ca68aea370b327c362a4a7da4917c2bba96029bceb"
+            },
+            "inference.yml": {
+                "size": 1579,
+                "sha256": "6f690098c438214c67822239a568f0bc2bbe97a8f02fba93e492d4f2c47523c3"
+            }
+        },
+        "slots": [
+            "layout-detect"
+        ],
+        "approxMB": 4.9,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE",
+        "attribution": "PP-DocLayout-S by PaddlePaddle (PaddleX/PaddleOCR); community ONNX conversion by Liyulingyue (Apache 2.0). The sha256 values pin the exact conversion this plugin was verified against.",
+        "upstream": {
+            "url": "https://www.modelscope.cn/models/PaddlePaddle/PP-DocLayout-S",
+            "verified": "2026-11-21: no official ONNX; this community conversion was checked by running it on a rendered two-column A4 page (all regions found with correct boxes and labels); the sha256 pins the checked file"
+        }
+    },
+    {
+        "id": "pp-doclayout-m",
+        "source": "modelscope:Liyulingyue/PP-DocLayout-M-ONNX",
+        "files": [
+            "inference.onnx",
+            "inference.yml"
+        ],
+        "checksums": {
+            "inference.onnx": {
+                "size": 23496727,
+                "sha256": "8e458bfc919bbf7a35be9802485b5cd30151cb356364cfad09911d2ee1fc1f76"
+            },
+            "inference.yml": {
+                "size": 1579,
+                "sha256": "76aeb103310f432ea773d4a6d187e15b26d92c051c5e2875598e1d49f725d70d"
+            }
+        },
+        "slots": [
+            "layout-detect"
+        ],
+        "approxMB": 23.5,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE",
+        "attribution": "PP-DocLayout-M by PaddlePaddle (PaddleX/PaddleOCR); community ONNX conversion by Liyulingyue (Apache 2.0). The sha256 values pin the exact conversion this plugin was verified against.",
+        "upstream": {
+            "url": "https://www.modelscope.cn/models/PaddlePaddle/PP-DocLayout-M",
+            "verified": "2026-11-21: no official ONNX; community conversion checked on the same rendered page as -S; the sha256 pins the checked file"
+        }
+    },
+    {
+        "id": "slanet-plus",
+        "source": "modelscope:PaddlePaddle/SLANet_plus_onnx",
+        "files": [
+            "inference.onnx",
+            "inference.yml"
+        ],
+        "checksums": {
+            "inference.onnx": {
+                "size": 7782138,
+                "sha256": "7790c0c13ce064782c9d22ebeb16b4da8216f83d3ba576da962c106ef58386da"
+            },
+            "inference.yml": {
+                "size": 2035,
+                "sha256": "8a6372d3269a6f112fe13a2da7952a84da6e112c10a3146cbb43de5bd01d19fa"
+            }
+        },
+        "slots": [
+            "table-recognize"
+        ],
+        "approxMB": 7.8,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE",
+        "attribution": "SLANet_plus by PaddlePaddle (PaddleOCR), https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE"
+    },
+    {
+        "id": "transnetv2",
+        "source": "modelscope:q502892879/transnetv2-onnx",
+        "files": [
+            "transnetv2.onnx",
+            "LICENSE"
+        ],
+        "checksums": {
+            "transnetv2.onnx": {
+                "size": 31250929,
+                "sha256": "c4d54a682bace32f25136ef83ca2c9d403e8f8193775efeb995172a0d95a8e0c"
+            },
+            "LICENSE": {
+                "size": 1072,
+                "sha256": "a8d7a056688ccedebe89f18fd60f1a47128df94cb82669cd02459934919cbb6f"
+            }
+        },
+        "slots": [
+            "split-video"
+        ],
+        "approxMB": 31.3,
+        "license": "MIT",
+        "licenseUrl": "https://github.com/soCzech/TransNetV2/blob/master/LICENSE",
+        "attribution": "TransNetV2, Copyright (c) 2020 Tomáš Souček, MIT License (https://github.com/soCzech/TransNetV2/blob/master/LICENSE); community ONNX export by q502892879.",
+        "upstream": {
+            "url": "https://github.com/soCzech/TransNetV2",
+            "verified": "2026-11-21: community ONNX export (MIT LICENSE shipped in the repo); checked by detecting the cuts of a synthetic 3-shot video; weights not compared against the upstream TF checkpoint"
+        }
+    },
+    {
+        "id": "dfine-nano",
+        "source": "modelscope:onnx-community/dfine_n_coco-ONNX",
+        "files": [
+            "config.json",
+            "preprocessor_config.json",
+            "onnx/model_int8.onnx"
+        ],
+        "checksums": {
+            "config.json": {
+                "size": 6597,
+                "sha256": "a5c7533f3b72be6bb102b93e1b34ca3643af4e0590408a7881543cbb0aa80c4c"
+            },
+            "preprocessor_config.json": {
+                "size": 444,
+                "sha256": "cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1"
+            },
+            "onnx/model_int8.onnx": {
+                "size": 4477908,
+                "sha256": "e1b9e192915dd19bcffad14ea205942bc6bae1363858cdedbeaf3ef7ec310e52"
+            }
+        },
+        "slots": [
+            "detect-objects"
+        ],
+        "approxMB": 4.5,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/Peterande/D-FINE/blob/master/LICENSE",
+        "attribution": "D-FINE by Peterande et al. (https://github.com/Peterande/D-FINE/blob/master/LICENSE), ONNX conversion by onnx-community; COCO class names."
+    },
+    {
+        "id": "dfine-nano-fp16",
+        "source": "modelscope:onnx-community/dfine_n_coco-ONNX",
+        "files": [
+            "config.json",
+            "preprocessor_config.json",
+            "onnx/model_fp16.onnx"
+        ],
+        "checksums": {
+            "config.json": {
+                "size": 6597,
+                "sha256": "a5c7533f3b72be6bb102b93e1b34ca3643af4e0590408a7881543cbb0aa80c4c"
+            },
+            "preprocessor_config.json": {
+                "size": 444,
+                "sha256": "cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1"
+            },
+            "onnx/model_fp16.onnx": {
+                "size": 7867551,
+                "sha256": "aa29236bf734b7e8d29d9d64e6753dc9eca31a384e1eded49af831a53f147aa2"
+            }
+        },
+        "slots": [
+            "detect-objects"
+        ],
+        "approxMB": 7.9,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/Peterande/D-FINE/blob/master/LICENSE",
+        "attribution": "D-FINE by Peterande et al. (https://github.com/Peterande/D-FINE/blob/master/LICENSE), ONNX conversion by onnx-community; COCO class names."
     }
 ]
