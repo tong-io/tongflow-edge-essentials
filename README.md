@@ -164,7 +164,17 @@ sizes with `Range: bytes=0-0` and would otherwise download each file twice.
   `remotePathTemplate = "{model}/"`; it caches model files in the Cache API (`transformers-cache`).
 - onnxruntime-web's wasm (`ort-wasm-simd-threaded.asyncify.wasm`, 28.7 MB, 7.1 MB gzip) is served
   from `dist/assets/ort/`, fetched once with progress and cached in the Cache API
-  (`tongflow-edge-assets`). Nothing is fetched from jsDelivr or huggingface.co.
+  (`tongflow-edge-assets`). Nothing is fetched from jsDelivr or huggingface.co. It is one
+  onnxruntime-web instance and one wasm for every node (transformers.js and the nodes that run
+  onnxruntime-web directly); a browser test asserts the wasm is requested once and no other ort build.
+- Models with external weights (`.onnx` + `.onnx_data`, all T3 models): the plugin declares each
+  graph's data file itself (`use_external_data_format`, from the model catalog) instead of trusting
+  the repo's `config.json`. GLM-OCR's names only the fp32 graphs, so transformers.js 4.3.2 created
+  the q4/q4f16 sessions without their weights and onnxruntime-web failed with
+  `Module.MountedFiles is not available`.
+- The build patches transformers.js' session-creation and run queues so one failed model load no
+  longer makes every later model in the worker fail with the same error (`tsdown.config.ts`,
+  `unpoisonedOrtChains`; the build fails if the pattern is not found after an upgrade).
 - **Serve the page cross-origin isolated** (`Cross-Origin-Opener-Policy: same-origin`,
   `Cross-Origin-Embedder-Policy: require-corp`) if you can: onnxruntime-web then uses threads,
   ≈2.6× faster (see below). Without isolation it runs single-threaded.
@@ -246,7 +256,7 @@ OpenCV.js and a DOM canvas.
 | `layout-detect` | `layoutDetect` | `pp-doclayout-s`, `pp-doclayout-m` | `layout`: JSON `[{label, score, box: [x1, y1, x2, y2]}]` in reading order; `regions`: one cropped PNG per entry, same order (`x-expand-each`) |
 | `table-recognize` | `tableRecognize` | `slanet-plus` | `html`: `<table>…</table>`, structure from SLANet_plus, cell text from PP-OCRv6 small |
 | `split-video` | `splitVideo` | `transnetv2` | `video_parts`: one video per shot, same container |
-| `detect-objects` | `detectObjects` | `dfine-nano` (int8), `dfine-nano-fp16` | `objects`: JSON `[{label, score, box: [x1, y1, x2, y2]}]` (COCO labels, pixels, best first) |
+| `detect-objects` | `detectObjects` | `dfine-nano-fp16` (default), `dfine-nano` (int8) | `objects`: JSON `[{label, score, box: [x1, y1, x2, y2]}]` (COCO labels, pixels, best first) |
 
 **`ocr-image`.** PP-OCRv6 det (DB) → crop → rec (CTC), as PaddleOCR/PaddleX do it: det input
 scaled so the short side is ≥ 64 and the long side ≤ 2048 (`_params.det_max_side`), multiples of 32;
@@ -289,7 +299,9 @@ returns the input unchanged as the single part.
 **`detect-objects`.** D-FINE nano through transformers.js's `object-detection` pipeline (the shared
 `ml/transformers.ts` runtime). Its sigmoid scores are modest (the cat test photo scores 0.6–0.7),
 so the default threshold is 0.35 (`_params.threshold`); near-identical boxes of one label
-(IoU ≥ 0.7) are merged. `dfine-nano-fp16` is faster on WASM and found more in the tests below.
+(IoU ≥ 0.7) are merged. The default is `dfine-nano-fp16`: on WASM it is both faster and more accurate
+than the int8 export, which missed obvious objects in the tests below. `dfine-nano` (int8, 3.4 MB
+smaller) stays available as the alternative.
 
 **Measured** (headless Chromium, Apple Silicon, WASM single-threaded, models served from
 `EDGE_MODELS_DIR`; "cold" = first call in a fresh worker, including fetch + session creation):
@@ -312,8 +324,7 @@ so the default threshold is 0.35 (`_params.threshold`); near-identical boxes of 
 Recognition quality in these runs: the synthetic scan and the PDF page were read without errors by
 `small` (`tiny` dropped one space); `table-recognize` reproduced every cell of both tables except
 one OCR slip ("5%" read as "5%%"); D-FINE int8 found the cat (0.69) but not the astronaut that
-fp16 finds (person 0.44), so `dfine-nano-fp16` is the better choice where 3.4 MB more download is
-acceptable.
+fp16 finds (person 0.44), which is why `dfine-nano-fp16` is the default.
 
 **Models** (all from ModelScope; mirror the repos 1:1 under the model base):
 
@@ -326,7 +337,7 @@ acceptable.
 | `pp-doclayout-s` / `-m` | `Liyulingyue/PP-DocLayout-S-ONNX`, `Liyulingyue/PP-DocLayout-M-ONNX` (community conversions, sha256-pinned) | 4.9 / 23.5 MB | Apache-2.0 |
 | `slanet-plus` | `PaddlePaddle/SLANet_plus_onnx` | 7.8 MB | Apache-2.0 |
 | `transnetv2` | `q502892879/transnetv2-onnx` (community export) | 31.3 MB | MIT |
-| `dfine-nano` / `dfine-nano-fp16` | `onnx-community/dfine_n_coco-ONNX` (`onnx/model_int8.onnx` / `onnx/model_fp16.onnx` + configs) | 4.5 / 7.9 MB | Apache-2.0 |
+| `dfine-nano-fp16` (default) / `dfine-nano` | `onnx-community/dfine_n_coco-ONNX` (`onnx/model_fp16.onnx` / `onnx/model_int8.onnx` + configs) | 7.9 / 4.5 MB | Apache-2.0 |
 
 Every T1 entry in `models.json` carries a `sha256` per file. Raw-ORT files are checked against it
 on a fresh download and kept in the Cache API bucket `tongflow-edge-models`; transformers.js keeps
@@ -400,7 +411,10 @@ Metal adapter with `shader-f16`, model served locally), LFM2.5-350M q4f16, `gen-
 ≈200-character Chinese contract clause: first run 6–11 s (3.5–8 s of it loading 255 MB into the
 Cache API and creating the session), ≈100 tokens of JSON at ≈45 tokens/s; the model resident:
 2.3 s, first token after 0.24 s; a fresh worker with the model in the Cache API: 2.5 s; cancel
-lands within one token.
+lands within one token. Same setup, the other T3 models (first run = download from the local model
+base + session creation + inference): `image-gen-text` Qwen3.5-0.8B describing a 900×172 image,
+128 new tokens, 19.6 s; `ocr-image` GLM-OCR q4f16 reading a two-line invoice image exactly, 4.1 s;
+`embed-image` EmbeddingGemma 2 q4f16, 2.8 s.
 
 #### Alternative implementations
 
@@ -532,7 +546,7 @@ needs. Gzip transfer on first use, chunks included:
 | gen-text | + structured output ≈ 15 kB |
 | any T1 vision node | slot glue 5.3 kB (`impl`) + geometry 2.6 kB + model registry 5.5 kB + hub 1.7 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared), then the model: OCR small 31 MB / tiny 6.3 MB, orientation 6.8 MB, layout 4.9 / 23.5 MB, table 7.8 MB + OCR small |
 | split-video | + split glue 3 kB + Mediabunny 195 kB + TransNetV2 31 MB |
-| detect-objects | glue 1 kB + transformers.js 123 kB + the shared runtime + D-FINE 4.5 MB (int8) / 7.9 MB (fp16) |
+| detect-objects | glue 1 kB + transformers.js 123 kB + the shared runtime + D-FINE 7.9 MB (fp16, default) / 4.5 MB (int8) |
 | any T2 audio node | audio pipeline 12 kB + Mediabunny 196 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared with transformers.js), then the models: SenseVoice 240 MB, VAD 2.3 MB, diarization 34 MB, CED 6.2 MB |
 
 `dist/` is committed: the scanner requires the manifest's `entry` to exist, and hosts load the
@@ -768,7 +782,13 @@ by `scripts/gen-vision-fixtures.mjs` (Chromium print, ffmpeg test sources).
 - transformers.js 设为 `allowLocalModels = false`、`remoteHost = modelBase`、`remotePathTemplate = "{model}/"`,模型文件缓存在
   Cache API(`transformers-cache`)。
 - onnxruntime-web 的 wasm(`ort-wasm-simd-threaded.asyncify.wasm`,28.7 MB,gzip 7.1 MB)放在 `dist/assets/ort/`,带进度下载一次后缓存在
-  Cache API(`tongflow-edge-assets`)。不访问 jsDelivr 或 huggingface.co。
+  Cache API(`tongflow-edge-assets`)。不访问 jsDelivr 或 huggingface.co。所有节点(transformers.js 与直接用 onnxruntime-web 的节点)共用
+  一个 onnxruntime-web 实例和一份 wasm;浏览器测试断言 wasm 只请求一次、不会请求其它 ort 构建。
+- 带外部权重的模型(`.onnx` + `.onnx_data`,所有 T3 模型):插件按模型目录自行声明每个计算图的数据文件(`use_external_data_format`),
+  不依赖仓库的 `config.json`。GLM-OCR 的配置只写了 fp32 计算图的文件名,transformers.js 4.3.2 因此在创建 q4/q4f16 会话时没带上权重,
+  onnxruntime-web 报 `Module.MountedFiles is not available`。
+- 构建时给 transformers.js 的会话创建/推理队列打补丁:一个模型加载失败后,同一 worker 里后续的模型不再全部带着同一个错误失败
+  (`tsdown.config.ts` 的 `unpoisonedOrtChains`;升级后找不到对应代码时构建直接报错)。
 - **页面尽量开启跨源隔离**(`Cross-Origin-Opener-Policy: same-origin`、`Cross-Origin-Embedder-Policy: require-corp`):这样
   onnxruntime-web 能用多线程,约快 2.6 倍;否则单线程运行。
 
@@ -824,7 +844,7 @@ OffscreenCanvas/ImageBitmap 完成,不用 OpenCV.js,不碰 DOM。没有用 Paddl
 | `layout-detect` | `layoutDetect` | `pp-doclayout-s`、`pp-doclayout-m` | `layout`:JSON `[{label, score, box: [x1, y1, x2, y2]}]`,按阅读顺序;`regions`:每项一张裁剪 PNG,顺序相同(`x-expand-each`) |
 | `table-recognize` | `tableRecognize` | `slanet-plus` | `html`:`<table>…</table>`,结构来自 SLANet_plus,单元格文字来自 PP-OCRv6 small |
 | `split-video` | `splitVideo` | `transnetv2` | `video_parts`:每个镜头一个视频,容器不变 |
-| `detect-objects` | `detectObjects` | `dfine-nano`(int8)、`dfine-nano-fp16` | `objects`:JSON `[{label, score, box: [x1, y1, x2, y2]}]`(COCO 类别,像素坐标,按分数降序) |
+| `detect-objects` | `detectObjects` | `dfine-nano-fp16`(默认)、`dfine-nano`(int8) | `objects`:JSON `[{label, score, box: [x1, y1, x2, y2]}]`(COCO 类别,像素坐标,按分数降序) |
 
 - **OCR**:检测(DB)→ 裁剪 → 识别(CTC),与 PaddleOCR/PaddleX 一致。检测输入短边 ≥ 64、长边 ≤ 2048(`_params.det_max_side`),
   取 32 的倍数;DB 阈值读自模型的 `inference.yml`;识别高 48,按宽高比分批;字典直接从识别模型仓库的 `inference.yml` 读取,保证与权重一致。
@@ -840,8 +860,8 @@ OffscreenCanvas/ImageBitmap 完成,不用 OpenCV.js,不碰 DOM。没有用 Paddl
   切点落在关键帧上时**直接转封装、不重编码**(编码器通常会在场景切换处放关键帧),否则用 WebCodecs 从切点重编码;浏览器编不了该编码时改为从前一个关键帧起拷贝。
   TransNetV2 未托管或加载失败时改用颜色直方图帧差检测(进度消息会说明)。只有一个镜头时原样返回输入。
 - **目标检测**:D-FINE nano 走 transformers.js 的 `object-detection` pipeline(共享的 `ml/transformers.ts`)。它的 sigmoid 分数偏低(测试猫图 0.6–0.7),
-  默认阈值 0.35(`_params.threshold`),同类且 IoU ≥ 0.7 的重复框合并。`dfine-nano-fp16` 在 WASM 上更快,测试中检出也更多
-(int8 漏检了宇航员图里的人,fp16 检出 0.44),能接受多 3.4 MB 下载时建议用 fp16。
+  默认阈值 0.35(`_params.threshold`),同类且 IoU ≥ 0.7 的重复框合并。默认用 `dfine-nano-fp16`:在 WASM 上比 int8 更快也更准
+(int8 漏检了宇航员图里的人,fp16 检出 0.44);`dfine-nano`(int8,小 3.4 MB)保留为备选。
 
 实测耗时与模型清单见英文部分。T1 的每个 `models.json` 条目都给每个文件记了 `sha256`:直接用 ORT 的模型首次下载时校验,存进 Cache API 的
 `tongflow-edge-models`;D-FINE 由 transformers.js 存进 `transformers-cache`。model base 对缺失文件返回 HTML 页(SPA 兜底)时,报"未托管"而不是去解析。
@@ -886,7 +906,9 @@ TransNetV2 © 2020 Tomáš Souček(MIT),ONNX 导出者 q502892879;D-FINE 由 Pet
 
 实测(Apple Silicon,无头 Chromium 159 加 `--enable-unsafe-webgpu --use-angle=metal`,Metal adapter 支持 `shader-f16`,模型本地提供):
 LFM2.5-350M q4f16 对约 200 字的中文合同条款做 `gen-text`,首次 6–11 s(其中 3.5–8 s 为把 255 MB 写入 Cache API 并创建 session),
-约 100 个 token、约 45 token/s;模型常驻时 2.3 s,首个 token 0.24 s;新 worker 从 Cache API 加载 2.5 s;取消在一个 token 内生效。
+约 100 个 token、约 45 token/s;模型常驻时 2.3 s,首个 token 0.24 s;新 worker 从 Cache API 加载 2.5 s;取消在一个 token 内生效。同样环境下其它 T3 模型(首次 = 从本地 model base 下载 + 创建 session + 推理):
+`image-gen-text` Qwen3.5-0.8B 描述一张 900×172 图片、128 个新 token 19.6 s;`ocr-image` GLM-OCR q4f16 准确读出两行发票文字 4.1 s;
+`embed-image` EmbeddingGemma 2 q4f16 2.8 s。
 
 **备选实现**:scanner 规定每个 `nodeSlot` 只能有一条 manifest 记录(重复会被拒:`declared more than once`),所以备选实现是该 slot
 记录里多一个**模型**,方法按 `ctx.model` 分派。`ocr-image` 现在是
@@ -974,7 +996,7 @@ snakers4 的 v5.1.2)、CED 字节一致;CAM++ 是较早的导出,GitHub 上的�
 - 切块 1.8 kB,kb-write 0.9 kB,宿主入口 `kb-host.js` / `embed-query.js` 各约 0.6 kB;
 - 老格式 91 kB,另加 wasm 约 17.3 MB;
 - T1 视觉节点:glue 约 15 kB 加共享的 onnxruntime-web 42 kB 与 ort wasm,再加模型(OCR small 31 MB/tiny 6.3 MB,方向 6.8 MB,版面 4.9/23.5 MB,表格 7.8 MB);
-  切镜头另加 Mediabunny 195 kB 和 TransNetV2 31 MB;目标检测另加 transformers.js 123 kB 和 D-FINE 4.5 MB(fp16 7.9 MB);
+  切镜头另加 Mediabunny 195 kB 和 TransNetV2 31 MB;目标检测另加 transformers.js 123 kB 和 D-FINE 7.9 MB(默认 fp16;int8 4.5 MB);
 - T3 节点:同一套 transformers.js / onnxruntime-web / ort wasm,再加模型本身(250–850 MB);`gen-text` 另加结构化输出约 15 kB。
 
 `dist/` 会提交进仓库:scanner 要求 manifest 的 `entry` 文件存在,宿主也是克隆仓库后直接加载。改动源码后要重新构建。
