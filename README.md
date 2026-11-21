@@ -244,7 +244,7 @@ dominates the latency); `dims` for `embed-image` (768, or the Matryoshka sizes 5
   model share one download).
 - *Downloads and cache.* Weights are reported through `modelDownload` (`loaded` / `total` summed
   over the model's files, `file` = `"<model> · <file>"`) and stored by transformers.js in the
-  Cache API bucket `tongflow-edge-models`, so a model downloads once per browser profile. Before
+  Cache API bucket `transformers-cache`, so a model downloads once per browser profile. Before
   downloading, the plugin checks `navigator.storage.estimate()` and fails clearly if the quota
   cannot hold the model. `navigator.storage.persist()` is window-only: **the host page should
   call it** before the first T3 run so the browser does not evict the models.
@@ -601,7 +601,7 @@ transformers.js **4.3.2** + onnxruntime-web **1.31.1**(所有 ML 节点共用这
 - 流式:生成的 token 实时写进 `progress`(`extracting: 37 tokens · …末尾文字`),之前先报 `reading the input (N tokens)`(prefill)。
 - 取消:`cancel` 在下一个 token 处停止,调用以 abort 错误结束;没有任何节点再等待的模型下载也会被取消(多个节点等同一模型时共用一次下载)。
 - 下载与缓存:通过 `modelDownload` 上报(`loaded`/`total` 为该模型所有文件之和,`file` 为 `"<模型> · <文件>"`);transformers.js 把文件存进
-  Cache API 的 `tongflow-edge-models`,同一浏览器配置只下载一次。下载前用 `navigator.storage.estimate()` 检查配额,装不下就明确报错。
+  Cache API 的 `transformers-cache`,同一浏览器配置只下载一次。下载前用 `navigator.storage.estimate()` 检查配额,装不下就明确报错。
   `navigator.storage.persist()` 只在页面里可用:**宿主页面应在首次运行 T3 前调用它**,避免浏览器回收模型。
 - 显存:最多常驻两个模型,超出时释放最久未用的空闲模型。
 - 精度:adapter 支持 `shader-f16` 时用 q4f16 权重(Qwen3.5 视觉塔用 fp16),否则用 q4。
