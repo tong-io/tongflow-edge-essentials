@@ -1128,5 +1128,327 @@
         "licenseUrl": "https://github.com/OFA-Sys/Chinese-CLIP/blob/master/LICENSE",
         "attribution": "Chinese-CLIP ViT-B/16 by OFA-Sys (Alibaba DAMO Academy, https://github.com/OFA-Sys/Chinese-CLIP), MIT License; ONNX conversion (joint text + vision graph, int8) by Xenova",
         "notes": "The Xenova repo has no license field and follows upstream (OFA-Sys/chinese-clip-vit-base-patch16: MIT)."
+    },
+    {
+        "id": "whisper-large-v3-turbo",
+        "source": "modelscope:onnx-community/whisper-large-v3-turbo",
+        "files": [
+            "config.json",
+            "generation_config.json",
+            "preprocessor_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "onnx/encoder_model_q4f16.onnx",
+            "onnx/decoder_model_merged_q4f16.onnx",
+            "onnx/encoder_model_q4.onnx",
+            "onnx/decoder_model_merged_q4.onnx"
+        ],
+        "checksums": {
+            "config.json": {
+                "size": 1332,
+                "sha256": "35cd83669f75bc2867f3b3a4461850392d5e308cd6ea951c3700539883c28df1"
+            },
+            "generation_config.json": {
+                "size": 3897,
+                "sha256": "16f95291d2f47c944d3c2b19390bba7965666555c1ea2a0bdc850d1fab45612f"
+            },
+            "preprocessor_config.json": {
+                "size": 340,
+                "sha256": "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711"
+            },
+            "tokenizer.json": {
+                "size": 2480617,
+                "sha256": "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca"
+            },
+            "tokenizer_config.json": {
+                "size": 282843,
+                "sha256": "844b642c73a91359722f47b35705f7174686df33d252695d8572cf9ac03a6389"
+            },
+            "onnx/encoder_model_q4f16.onnx": {
+                "size": 369974078,
+                "sha256": "aafd3383f1aa372db0825a885730ebbbae7e34871ec0460428663c69641a63d0"
+            },
+            "onnx/decoder_model_merged_q4f16.onnx": {
+                "size": 193505017,
+                "sha256": "45981cdd958a4c8e1447839850d2e6e27e30974ccbe31b4a1e5ebe9ad8965a5f"
+            },
+            "onnx/encoder_model_q4.onnx": {
+                "size": 424942775,
+                "sha256": "7e64b20dd7b556cb7a2c1c65d9fbf31af985323c006f993d2a9dd10083547d78"
+            },
+            "onnx/decoder_model_merged_q4.onnx": {
+                "size": 334147222,
+                "sha256": "8b933ac24074a24a1635084d06a4ed37e387ef22d980f184a5fc27418e9ceeb8"
+            }
+        },
+        "slots": [
+            "transcribe"
+        ],
+        "approxMB": 1325.3,
+        "license": "MIT",
+        "licenseUrl": "https://github.com/openai/whisper/blob/main/LICENSE",
+        "attribution": "Whisper large-v3-turbo by OpenAI (MIT License); ONNX conversion and q4/q4f16 quantization by onnx-community (modified: converted to ONNX and quantized).",
+        "notes": "WebGPU only. q4f16 (encoder_model_q4f16.onnx + decoder_model_merged_q4f16.onnx, 564 MB) on adapters with shader-f16, q4 (759 MB) otherwise; a browser downloads one pair. Self-contained graphs (no .onnx_data)."
+    },
+    {
+        "id": "cohere-transcribe-03-2026",
+        "source": "modelscope:onnx-community/cohere-transcribe-03-2026-ONNX",
+        "files": [
+            "config.json",
+            "generation_config.json",
+            "preprocessor_config.json",
+            "processor_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "onnx/encoder_model_q4f16.onnx",
+            "onnx/encoder_model_q4f16.onnx_data",
+            "onnx/decoder_model_merged_q4f16.onnx",
+            "onnx/decoder_model_merged_q4f16.onnx_data"
+        ],
+        "checksums": {
+            "config.json": {
+                "size": 5102,
+                "sha256": "09cec8fb9a44e8c278b23efd2b8afbf29e560c2eb2b5c1a6b448d8b33a6632bf"
+            },
+            "generation_config.json": {
+                "size": 233,
+                "sha256": "dd575639e03b2651c2ecad52c1a51e6126d2a516780cfe85e7b4517f05bd9754"
+            },
+            "preprocessor_config.json": {
+                "size": 565,
+                "sha256": "25dee36a3a47950bbed2e8c7332e99a87f1b3244864db23f972ccd4121eb469d"
+            },
+            "processor_config.json": {
+                "size": 634,
+                "sha256": "b362db9538c695d84be46232025d8488423bd47a0fa3412d6019ec32c0615940"
+            },
+            "tokenizer.json": {
+                "size": 1152395,
+                "sha256": "e263c0ba13be0f0803705b002756908f84efc6e75a4c273231a01c4371908a2b"
+            },
+            "tokenizer_config.json": {
+                "size": 4549,
+                "sha256": "4c8fec06c9e195180299db3baa370d0090be68ec611cadcf54c43217a306ca05"
+            },
+            "onnx/encoder_model_q4f16.onnx": {
+                "size": 1410988,
+                "sha256": "81c3369197348c87f28048fcd0cc3fa286b4f63cd950fa52c9756f2ea1c6eefa"
+            },
+            "onnx/encoder_model_q4f16.onnx_data": {
+                "size": 1435501056,
+                "sha256": "6b9972eaf442a13689096fe27722f493f279e71bd4c6ae15cb6b95364aa6b3d8"
+            },
+            "onnx/decoder_model_merged_q4f16.onnx": {
+                "size": 194936,
+                "sha256": "4c5c1a993dc715920fb3d46bfeb35350e6edf58ce474ecd6bb150ff58a8055c6"
+            },
+            "onnx/decoder_model_merged_q4f16.onnx_data": {
+                "size": 97951744,
+                "sha256": "d00de89d2b34d61393a0a3460bee1bf418eed2ca0d11be43d3db237e1250358f"
+            }
+        },
+        "slots": [
+            "transcribe"
+        ],
+        "approxMB": 1536.2,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://www.modelscope.cn/models/onnx-community/cohere-transcribe-03-2026-ONNX",
+        "attribution": "Cohere Transcribe 03-2026 by Cohere (Apache-2.0); ONNX conversion and q4f16 quantization by onnx-community (modified: converted to ONNX and quantized).",
+        "notes": "WebGPU with shader-f16 only (the q4 encoder is 2 GB, not shipped). encoder_model_q4f16.onnx_data is one 1.44 GB file: the weight host must serve files that large."
+    },
+    {
+        "id": "qwen3-asr-0.6b-int8",
+        "source": "modelscope:jkman2023/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
+        "files": [
+            "conv_frontend.onnx",
+            "encoder.int8.onnx",
+            "decoder.int8.onnx",
+            "tokenizer/vocab.json",
+            "tokenizer/merges.txt",
+            "tokenizer/tokenizer_config.json",
+            "LICENSE"
+        ],
+        "checksums": {
+            "conv_frontend.onnx": {
+                "size": 44148281,
+                "sha256": "d22dc4423e0940e49884e903d2ea2f7e5567c14fc1aed97e4e26d6b8f208ef9e"
+            },
+            "encoder.int8.onnx": {
+                "size": 182491662,
+                "sha256": "60748d3e6744a57c9c91e1b17424a6c2990567e8adceb0783940c03ed98fa9d9"
+            },
+            "decoder.int8.onnx": {
+                "size": 755914231,
+                "sha256": "4f6885be5959ae26af3089d38ee7972c5fafbeeb1cf8d5e76eab6d8b61ca5771"
+            },
+            "tokenizer/vocab.json": {
+                "size": 2776833,
+                "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+            },
+            "tokenizer/merges.txt": {
+                "size": 1671853,
+                "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+            },
+            "tokenizer/tokenizer_config.json": {
+                "size": 12487,
+                "sha256": "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c"
+            },
+            "LICENSE": {
+                "size": 11358,
+                "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+            }
+        },
+        "slots": [
+            "transcribe"
+        ],
+        "approxMB": 987.0,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://www.modelscope.cn/models/Qwen/Qwen3-ASR-0.6B",
+        "attribution": "Qwen3-ASR-0.6B by the Qwen team, Alibaba Cloud (Apache-2.0); ONNX export by Wasser1462 (github.com/Wasser1462/Qwen3-ASR-onnx), int8 packaging by k2-fsa/sherpa-onnx (modified: converted to ONNX and quantized).",
+        "upstream": {
+            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+            "asset": "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
+            "verified": "2026-11-22: mirror by jkman2023 (REDISTRIBUTION_NOTICE.md: unmodified sherpa-onnx asr-models release); same transcripts as sherpa-onnx 2.0.2 (Python) on the test files"
+        },
+        "notes": "Runs on the CPU (wasm EP). decoder.int8.onnx is one 756 MB file. LICENSE (Apache-2.0) is the mirror's copy, hosted next to the weights; it is not fetched at runtime."
+    },
+    {
+        "id": "zipformer-ctc-small-zh-int8",
+        "source": "modelscope:csukuangfj/sherpa-onnx-zipformer-ctc-small-zh-int8-2025-07-16",
+        "files": [
+            "model.int8.onnx",
+            "tokens.txt"
+        ],
+        "checksums": {
+            "model.int8.onnx": {
+                "size": 62666860,
+                "sha256": "32e5f17cc9a77d480f8d94bda97b7cc7a40965b6651b35385813f561a74129c8"
+            },
+            "tokens.txt": {
+                "size": 13366,
+                "sha256": "6fed8c6c248516f38e7faa19404b57413e8ce259f1cbc1fa4aebc86eac32fdfd"
+            }
+        },
+        "slots": [
+            "transcribe"
+        ],
+        "approxMB": 62.7,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/k2-fsa/icefall/blob/master/LICENSE",
+        "attribution": "Zipformer-CTC small zh by k2-fsa/icefall (Apache-2.0); int8 ONNX export by k2-fsa/sherpa-onnx (csukuangfj).",
+        "upstream": {
+            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+            "asset": "sherpa-onnx-zipformer-ctc-small-zh-int8-2025-07-16",
+            "verified": "2026-11-22: ModelScope repo by the sherpa-onnx author (csukuangfj); identical transcripts to sherpa-onnx 2.0.2 (Python)"
+        },
+        "notes": "No punctuation in its output (WenetSpeech-style transcripts)."
+    },
+    {
+        "id": "nemotron-3-diarization-q4",
+        "source": "modelscope:onnx-community/Nemotron-3-Diarization-ONNX",
+        "files": [
+            "onnx/model_q4.onnx",
+            "onnx/model_q4.onnx_data"
+        ],
+        "checksums": {
+            "onnx/model_q4.onnx": {
+                "size": 359731,
+                "sha256": "3e5e93dfd8289770343c402079d36034faa4a2eac260f66115f85ba9a2de41b2"
+            },
+            "onnx/model_q4.onnx_data": {
+                "size": 82768000,
+                "sha256": "4513ed877d7cb83944bcb27c747221a7180e03f790d1c703e50af01792b7b8f4"
+            }
+        },
+        "slots": [
+            "diarize-speakers"
+        ],
+        "approxMB": 83.1,
+        "license": "OpenMDW-1.1",
+        "licenseUrl": "licenses/OpenMDW-1.1.txt",
+        "attribution": "Nemotron-3-Diarization by NVIDIA, licensed under the OpenMDW License Agreement v1.1 (copy in licenses/OpenMDW-1.1.txt); ONNX conversion and q4 quantization by onnx-community (modified: converted to ONNX and quantized).",
+        "notes": "OpenMDW-1.1: redistribution must retain a copy of the agreement and the notices of origin; host licenses/OpenMDW-1.1.txt next to the weights and list it on the about/third-party page. q4 (83 MB) runs on the wasm EP; the 73 MB q4f16 needs WebGPU and is not used."
+    },
+    {
+        "id": "harrier-oss-v1-270m",
+        "source": "modelscope:onnx-community/harrier-oss-v1-270m-ONNX",
+        "files": [
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "onnx/model_q4.onnx",
+            "onnx/model_q4.onnx_data"
+        ],
+        "checksums": {
+            "config.json": {
+                "size": 1608,
+                "sha256": "5366f9919a82aaeceb6707bf218c5769f414d60f5dbaf781fa07e5465487fd7c"
+            },
+            "tokenizer.json": {
+                "size": 20323311,
+                "sha256": "ec95be298bea26f90370854faa650744c9fb0a04ca5e5ff95dd3913393ac5e45"
+            },
+            "tokenizer_config.json": {
+                "size": 702,
+                "sha256": "135405f3479eaebc473e2e78593f2195c7598948a215ee748758def426b30f59"
+            },
+            "onnx/model_q4.onnx": {
+                "size": 239762,
+                "sha256": "228dca2603b907d673dd99cf89c309c0ca68baeed127416a5e027a48e62b0f49"
+            },
+            "onnx/model_q4.onnx_data": {
+                "size": 205492736,
+                "sha256": "b5a15487360f5341659480ae4b5ad60028d5f865bd329196ec8d5708bbed3118"
+            }
+        },
+        "slots": [
+            "embed-text"
+        ],
+        "approxMB": 226.1,
+        "license": "MIT",
+        "licenseUrl": "https://www.modelscope.cn/models/onnx-community/harrier-oss-v1-270m-ONNX",
+        "attribution": "harrier-oss-v1-270m by Microsoft (MIT License); ONNX conversion and q4 quantization by onnx-community (modified: converted to ONNX and quantized).",
+        "notes": "WebGPU only: the quantized exports use GatherBlockQuantized for the embedding table, which onnxruntime-web's wasm build lacks. Queries take the instruction prefix (HARRIER_QUERY_INSTRUCTION)."
+    },
+    {
+        "id": "granite-embedding-97m-multilingual-r2",
+        "source": "modelscope:onnx-community/granite-embedding-97m-multilingual-r2-ONNX",
+        "files": [
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "onnx/model_quantized.onnx"
+        ],
+        "checksums": {
+            "config.json": {
+                "size": 1215,
+                "sha256": "ae74d55a56f779774cb9a8e63d3c2da9ae1af83c00229ffdff43d0b38407a0ee"
+            },
+            "tokenizer.json": {
+                "size": 25301671,
+                "sha256": "51947676cae1f991fa51c6b9a24e14ee5460e5f0b9f692f13bb3159829d1592a"
+            },
+            "tokenizer_config.json": {
+                "size": 12860,
+                "sha256": "6ed69389e30a8ecabfce2f9ebcdf0c908b34056f24d994340f2f216521c057d5"
+            },
+            "special_tokens_map.json": {
+                "size": 871,
+                "sha256": "013787ee251ff611722479197c00853b62113ad303cb0a36524231783c676c69"
+            },
+            "onnx/model_quantized.onnx": {
+                "size": 97858099,
+                "sha256": "704c1ebca5fbb7cd83ced41827658ac4c9990c64f7f2874d22b78044e5022e22"
+            }
+        },
+        "slots": [
+            "embed-text"
+        ],
+        "approxMB": 123.2,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://www.apache.org/licenses/LICENSE-2.0",
+        "attribution": "granite-embedding-97m-multilingual-r2 by the IBM Granite Embedding Team (Apache-2.0); ONNX conversion and int8 quantization by onnx-community (modified: converted to ONNX and quantized).",
+        "notes": "CPU (wasm EP), CLS pooling, no query prefix."
     }
 ]
