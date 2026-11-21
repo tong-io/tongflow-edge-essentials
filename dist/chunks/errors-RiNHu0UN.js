@@ -1,1 +1,0 @@
-var e=class extends Error{constructor(e){super(e),this.name=`EdgeError`}};function t(e){return e instanceof Error?e.message||e.name:String(e)}function n(t){if(t.aborted){let n=t.reason;throw n instanceof Error?n:new e(`aborted`)}}const r=0x6400000;export{n as i,r as n,t as r,e as t};
