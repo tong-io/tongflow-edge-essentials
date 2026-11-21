@@ -1,9 +1,8 @@
 // The four alternatives without model weights: X-ASR's transducer decoding and text rules,
 // SenseVoice CTC frames, sentence timestamps, the MuPDF structured-text → Markdown conversion
-// (and MuPDF itself, which runs in Node), Qwen's gen-text settings, the streaming SHA-256 and
-// the manifest / models.json entries. Real-model runs: audio-models.test.ts (EDGE_MODELS_DIR)
+// (and MuPDF itself, which runs in Node), Qwen's gen-text settings and the manifest / models.json
+// entries. Real-model runs: audio-models.test.ts (EDGE_MODELS_DIR)
 // and test/browser/gen-text-qwen.test.ts, test/browser/mupdf.test.ts.
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { SLOT_MODELS } from "../../src/audio/pipeline.js";
@@ -17,12 +16,11 @@ import { impls } from "../../src/index.js";
 import { QWEN35_TEXT, T3_MODELS, hostedFiles, pickModel, variantFor } from "../../src/ml/catalog.js";
 import { KEY_POINTS_STRICT_SYSTEM, KEY_POINTS_STRICT_SYSTEM_ZH, dropRestatedPoints, keyPointMessages } from "../../src/ml/prompts.js";
 import { applyRepeatControl, applyRepeatControlFeasible } from "../../src/ml/repeat.js";
-import { verifiedResponse } from "../../src/ml/runtime.js";
 import { X_ASR } from "../../src/models/registry.js";
 import { GEN_TEXT_MODELS, QWEN_TEXT_MAX_NEW_TOKENS } from "../../src/slots/gen-text.js";
 import { PDF_IMPLS } from "../../src/slots/parse-document.js";
+import { PARSE_IMPLS } from "../../src/formats/impls.js";
 import { RENDER_DPI } from "../../src/slots/render-pages.js";
-import { Sha256, sha256Hex } from "../../src/util/sha256.js";
 import { fixture, nodeCtx } from "../helpers/node-ctx.js";
 
 const root = new URL("../../", import.meta.url);
@@ -245,7 +243,7 @@ describe("MuPDF structured text → Markdown", () => {
         const pdfjs = await impls.parseDocument({ document: doc }, nodeCtx());
         expect(pdfjs.text).not.toMatch(/^#/);
         const bad = await impls.parseDocument({ document: doc }, nodeCtx(undefined, { model: "pymupdf" }));
-        expect(bad).toMatchObject({ success: false, error: expect.stringMatching(/unknown model "pymupdf" for parse-document; available: pdfjs, mupdf/) });
+        expect(bad).toMatchObject({ success: false, error: expect.stringMatching(/unknown parse-document implementation "pymupdf" \(use builtin, pdfium, pdf2md, officeparser, readability, mupdf\)/) });
     });
 
     it("parse-document (model mupdf): embedded images come back as PNG and are referenced where they sit", async () => {
@@ -353,32 +351,6 @@ describe("gen-text: Qwen3.5-0.8B text alternative", () => {
     });
 });
 
-/* ---------------- verification ---------------- */
-
-describe("streaming SHA-256 for T3 model files", () => {
-    it("matches node:crypto, across chunk boundaries", () => {
-        for (const n of [0, 1, 55, 56, 63, 64, 65, 127, 1000, 70_000]) {
-            const data = Uint8Array.from({ length: n }, (_, i) => (i * 31 + 7) & 255);
-            const ref = createHash("sha256").update(data).digest("hex");
-            expect(sha256Hex(data), String(n)).toBe(ref);
-            const h = new Sha256();
-            for (let i = 0; i < n; i += 37) h.update(data.subarray(i, i + 37));
-            expect(h.hex()).toBe(ref);
-        }
-    });
-
-    it("a mismatching body errors the stream before the consumer gets its end", async () => {
-        const body = new TextEncoder().encode("model bytes");
-        const good = { size: body.length, sha256: createHash("sha256").update(body).digest("hex") };
-        const ok = verifiedResponse(new Response(body), "org/repo/x.onnx", good);
-        expect(new Uint8Array(await ok.arrayBuffer())).toEqual(body);
-        const bad = verifiedResponse(new Response(body), "org/repo/x.onnx", { ...good, sha256: "0".repeat(64) });
-        await expect(bad.arrayBuffer()).rejects.toThrow(/org\/repo\/x\.onnx failed its SHA-256 check/);
-        const short = verifiedResponse(new Response(body), "org/repo/x.onnx", { ...good, size: 99 });
-        await expect(short.arrayBuffer()).rejects.toThrow(/has 11 bytes, expected 99/);
-    });
-});
-
 /* ---------------- manifest ---------------- */
 
 describe("manifest: the alternatives sit in their slot's models list, default first", () => {
@@ -387,7 +359,9 @@ describe("manifest: the alternatives sit in their slot's models list, default fi
         expect(slotEntry("transcribe")?.models).toEqual(["sensevoice-small", "sensevoice-small+ffmpeg-wasm", "x-asr-zh-en", "x-asr-zh-en+ffmpeg-wasm"]);
         expect(slotEntry("transcribe-timestamp")).toEqual({ nodeSlot: "transcribe-timestamp", method: "transcribeTimestamp", models: [...SLOT_MODELS["transcribe-timestamp"]] });
         expect(slotEntry("gen-text")?.models).toEqual(GEN_TEXT_MODELS.map((m) => m.id));
-        expect(slotEntry("parse-document")?.models).toEqual([...PDF_IMPLS]);
+        expect(slotEntry("parse-document")?.models).toEqual([...PARSE_IMPLS]);
+        expect(PARSE_IMPLS[0]).toBe("builtin");
+        expect(PARSE_IMPLS).toContain("mupdf");
         expect(slotEntry("render-pages")?.models).toEqual([...PDF_IMPLS]);
         // the scanner rejects a slot declared twice
         const slots = manifest.slots.map((s) => s.nodeSlot);

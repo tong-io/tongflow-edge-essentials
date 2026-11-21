@@ -983,7 +983,7 @@ parser rows always run, the model rows need `EDGE_MODELS_DIR`. Run it on its own
 **The four alternatives** (`test/node/four-alternatives.test.ts`, no weights): transducer search and
 sherpa's text rules, SenseVoice CTC frames, sentence timestamps, the MuPDF structured-text → Markdown
 conversion and MuPDF itself in Node (parse, images, render), Qwen's prompt, repetition guard and
-restated-point filter, the streaming SHA-256, and the manifest entries. With `EDGE_MODELS_DIR`:
+restated-point filter, and the manifest entries. With `EDGE_MODELS_DIR`:
 `test/node/audio-models.test.ts` (X-ASR = sherpa-onnx's text; timestamps on the dialog),
 `test/browser/audio.test.ts` (X-ASR and `transcribe-timestamp` in the worker),
 `test/browser/gen-text-qwen.test.ts` (LFM and Qwen on a contract clause and the demo meeting, no
@@ -1651,7 +1651,7 @@ model base,目录挂在 `/models/`,Chromium 加 `--enable-unsafe-webgpu` 启动(
 单独设 `EDGE_WEBGPU=1` 只加这些参数),目录里有哪个模型就跑哪个,其余跳过。
 
 **四项换实现的测试**:`test/node/four-alternatives.test.ts`(不需要权重)覆盖 transducer 搜索和 sherpa 的文本规则、SenseVoice CTC 帧、
-句级时间戳、MuPDF 结构化文本转 Markdown 以及 MuPDF 本身在 Node 下的解析/图片/渲染、Qwen 的提示词/防复读兜底/复述过滤、流式 SHA-256、
+句级时间戳、MuPDF 结构化文本转 Markdown 以及 MuPDF 本身在 Node 下的解析/图片/渲染、Qwen 的提示词/防复读兜底/复述过滤、
 manifest 条目。设置 `EDGE_MODELS_DIR` 时另跑:`test/node/audio-models.test.ts`(X-ASR 文本与 sherpa-onnx 一致,对话的时间戳)、
 `test/browser/audio.test.ts`(worker 里的 X-ASR 和 `transcribe-timestamp`)、`test/browser/gen-text-qwen.test.ts`(LFM 与 Qwen 处理合同条款和
 演示会议,不得编造数字)。`test/browser/mupdf.test.ts` 不需要权重。浏览器测试请逐个文件运行。
