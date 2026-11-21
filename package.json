@@ -2,7 +2,7 @@
     "name": "tongflow-edge-essentials",
     "version": "0.1.0",
     "private": true,
-    "description": "Official TongFlow browser edge plugin: on-device document, media and language nodes (T0, zero-model).",
+    "description": "Official TongFlow browser edge plugin: on-device document, media, language and knowledge-base (chunk, embed, write) nodes.",
     "license": "AGPL-3.0-only",
     "author": "tong-io",
     "repository": {
@@ -18,13 +18,23 @@
             "types": "./dist/index.d.ts",
             "default": "./dist/index.js"
         },
-        "./tongflow.plugin.json": "./tongflow.plugin.json"
+        "./embed-query": {
+            "types": "./dist/embed-query.d.ts",
+            "default": "./dist/embed-query.js"
+        },
+        "./kb-host": {
+            "types": "./dist/kb-host.d.ts",
+            "default": "./dist/kb-host.js"
+        },
+        "./tongflow.plugin.json": "./tongflow.plugin.json",
+        "./models.json": "./models.json"
     },
     "files": [
         "dist",
         "tongflow.plugin.json",
         "README.md",
-        "LICENSE"
+        "LICENSE",
+        "models.json"
     ],
     "scripts": {
         "build": "tsdown && node scripts/copy-assets.mjs",
@@ -38,6 +48,7 @@
         "node": ">=20"
     },
     "dependencies": {
+        "@huggingface/transformers": "4.3.2",
         "@kenjiuno/msgreader": "1.29.0",
         "@xberg-io/xberg-wasm": "1.4.2",
         "@zip.js/zip.js": "2.25.0",
@@ -47,6 +58,7 @@
         "mammoth": "1.13.0",
         "marked": "18.2.1",
         "mediabunny": "1.66.2",
+        "onnxruntime-web": "1.31.1",
         "papaparse": "5.7.1",
         "pdfjs-dist": "6.5.438",
         "postal-mime": "4.2.1",
@@ -69,5 +81,8 @@
         "tsdown": "0.23.7",
         "typescript": "5.9.3",
         "vitest": "5.1.1"
+    },
+    "overrides": {
+        "onnxruntime-web": "$onnxruntime-web"
     }
 }
