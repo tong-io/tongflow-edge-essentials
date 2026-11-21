@@ -717,6 +717,7 @@
             "merge-video-audio",
             "split-video",
             "transcribe",
+            "transcribe-timestamp",
             "vad-segment",
             "diarize-speakers",
             "audio-tag"

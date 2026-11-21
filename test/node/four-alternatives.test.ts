@@ -383,7 +383,8 @@ describe("streaming SHA-256 for T3 model files", () => {
 
 describe("manifest: the alternatives sit in their slot's models list, default first", () => {
     it("transcribe / transcribe-timestamp, gen-text, parse-document, render-pages", () => {
-        expect(slotEntry("transcribe")?.models).toEqual(["sensevoice-small", "x-asr-zh-en"]);
+        // with the ffmpeg.wasm-decoded variant of each recognizer (`<model>+ffmpeg-wasm`)
+        expect(slotEntry("transcribe")?.models).toEqual(["sensevoice-small", "sensevoice-small+ffmpeg-wasm", "x-asr-zh-en", "x-asr-zh-en+ffmpeg-wasm"]);
         expect(slotEntry("transcribe-timestamp")).toEqual({ nodeSlot: "transcribe-timestamp", method: "transcribeTimestamp", models: [...SLOT_MODELS["transcribe-timestamp"]] });
         expect(slotEntry("gen-text")?.models).toEqual(GEN_TEXT_MODELS.map((m) => m.id));
         expect(slotEntry("parse-document")?.models).toEqual([...PDF_IMPLS]);
@@ -398,6 +399,6 @@ describe("manifest: the alternatives sit in their slot's models list, default fi
             { audio: { bytesBase64: Buffer.from(readFileSync(new URL("../fixtures/audio/hello-zh.wav", import.meta.url))).toString("base64"), filename: "a.wav" } },
             nodeCtx(undefined, { model: "whisper" }),
         );
-        expect(r).toMatchObject({ success: false, error: expect.stringMatching(/unknown model "whisper" for transcribe-timestamp; available: sensevoice-small, x-asr-zh-en/) });
+        expect(r).toMatchObject({ success: false, error: expect.stringMatching(/unknown model "whisper" for transcribe-timestamp; available: sensevoice-small, sensevoice-small\+ffmpeg-wasm, x-asr-zh-en, x-asr-zh-en\+ffmpeg-wasm/) });
     });
 });

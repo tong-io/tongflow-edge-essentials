@@ -147,12 +147,16 @@ describe("manifest, ABI and models.json", () => {
         }
         for (const [slot, model] of [
             ["transcribe", "sensevoice-small"],
+            ["transcribe-timestamp", "sensevoice-small"],
             ["vad-segment", "silero-vad-v5"],
             ["diarize-speakers", "pyannote-campplus-zh"],
             ["audio-tag", "ced-tiny"],
             ["split-video", "transnetv2"],
         ]) {
-            expect(manifest.slots.find((s) => s.nodeSlot === slot)!.models).toEqual([model, `${model}+ffmpeg-wasm`]);
+            const models = manifest.slots.find((s) => s.nodeSlot === slot)!.models!;
+            expect(models.slice(0, 2)).toEqual([model, `${model}+ffmpeg-wasm`]);
+            // every model of the slot (X-ASR for transcribe too) has its ffmpeg-decoded variant
+            for (const m of models.filter((x) => !x.endsWith("+ffmpeg-wasm"))) expect(models).toContain(`${m}+ffmpeg-wasm`);
         }
     });
 
@@ -169,7 +173,7 @@ describe("manifest, ABI and models.json", () => {
         for (const f of entry.licenseFiles) expect(readFileSync(new URL(f, root), "utf8").length).toBeGreaterThan(1000);
         expect(readFileSync(new URL("licenses/GPL-2.0.txt", root), "utf8")).toMatch(/GNU GENERAL PUBLIC LICENSE\s+Version 2, June 1991/);
         // Every slot that can run ffmpeg says so, so the hosting side knows who needs the core.
-        expect(new Set(entry.slots)).toEqual(new Set([...MEDIA, "split-video", "transcribe", "vad-segment", "diarize-speakers", "audio-tag"]));
+        expect(new Set(entry.slots)).toEqual(new Set([...MEDIA, "split-video", "transcribe", "transcribe-timestamp", "vad-segment", "diarize-speakers", "audio-tag"]));
     });
 
     it("the registered checksums are the pinned npm package's bytes", () => {
