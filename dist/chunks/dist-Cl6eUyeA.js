@@ -1,0 +1,1 @@
+export{t as parse}from"./pptxtojson-Utw3fl4n.js";

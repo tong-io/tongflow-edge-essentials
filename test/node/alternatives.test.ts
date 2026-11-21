@@ -256,7 +256,10 @@ describe("parse-document alternatives", () => {
     it("each implementation is offered only for the formats it reads", () => {
         expect(slotModels("parse-document")).toEqual([...PARSE_IMPLS]);
         expect(parseImpl(undefined)).toBe("builtin");
-        expect(() => parseImpl("mupdf")).toThrow(/unknown parse-document implementation/);
+        expect(parseImpl("mupdf")).toBe("mupdf");
+        expect(implSupports("mupdf", "pdf", "pdf")).toBe(true);
+        expect(implSupports("mupdf", "docx", "docx")).toBe(false);
+        expect(() => parseImpl("pymupdf")).toThrow(/unknown parse-document implementation/);
         expect(implSupports("pdfium", "pdf", "pdf")).toBe(true);
         expect(implSupports("pdf2md", "docx", "docx")).toBe(false);
         expect(implSupports("readability", "html", "htm")).toBe(true);

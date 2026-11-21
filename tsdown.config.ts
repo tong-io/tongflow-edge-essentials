@@ -53,8 +53,21 @@ export const unpoisonedOrtChains = {
     },
 };
 
+/**
+ * MuPDF.js imports `node:fs` and `module` only behind a "running in Node" check (so an
+ * in-process Node host can still use it). Keep both as external imports, on purpose and
+ * without a warning; a browser never evaluates them.
+ */
+const mupdfNodeOnly = {
+    name: "mupdf-node-only",
+    resolveId(id: string, importer?: string) {
+        if ((id === "node:fs" || id === "module") && importer && /[\\/]node_modules[\\/]mupdf[\\/]/.test(importer)) return { id, external: true };
+        return null;
+    },
+};
+
 export default defineConfig({
-    plugins: [noThirdPartyHosts, unpoisonedOrtChains],
+    plugins: [noThirdPartyHosts, unpoisonedOrtChains, mupdfNodeOnly],
     // `ffmpeg-worker` is the nested worker ffmpeg.wasm runs in (dist/ffmpeg-worker.js).
     entry: ["src/index.ts", "src/embed-query.ts", "src/kb-host.ts", "src/ffmpeg-worker.ts"],
     format: "esm",
@@ -111,6 +124,8 @@ export default defineConfig({
                 { name: "pdf2md", test: /node_modules[\\/](@opendocsg[\\/]pdf2md|unpdf|enumify)[\\/]/ },
                 { name: "officeparser", test: /node_modules[\\/]officeparser[\\/]/ },
                 { name: "readability", test: /node_modules[\\/]@mozilla[\\/]readability[\\/]/ },
+                // MuPDF.js (AGPL-3.0-or-later): the `mupdf` implementation of parse-document / render-pages.
+                { name: "mupdf", test: /node_modules[\\/]mupdf[\\/]/ },
                 // T3 (WebGPU) runtime: transformers.js + onnxruntime-web (one pinned version).
                 { name: "onnxruntime-web", test: /node_modules[\\/](onnxruntime-web|onnxruntime-common)[\\/]/ },
                 { name: "transformers", test: /node_modules[\\/]@huggingface[\\/]transformers[\\/]/ },

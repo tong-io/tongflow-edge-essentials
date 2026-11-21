@@ -1,1 +1,0 @@
-import{o as e}from"./rolldown-runtime-BB8GkNNy.js";import{t}from"./markdown-B9Szs29K.js";import{t as n}from"./text-CZ1iVbTh.js";async function r(r){let i=await import(`./papaparse-2ho_12P9.js`).then(t=>/* @__PURE__ */ e(t.default,1)),a=i.default??i,o=n(r),s=a.parse(o,{skipEmptyLines:`greedy`});return t(s.data)}export{r as parseCsv};

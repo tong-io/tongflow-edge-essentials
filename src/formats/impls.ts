@@ -7,7 +7,7 @@
 import type { DocFormat } from "./detect.js";
 
 /** Model ids of `parse-document`, default first (as in the manifest). */
-export const PARSE_IMPLS = ["builtin", "pdfium", "pdf2md", "officeparser", "readability"] as const;
+export const PARSE_IMPLS = ["builtin", "pdfium", "pdf2md", "officeparser", "readability", "mupdf"] as const;
 export type ParseImpl = (typeof PARSE_IMPLS)[number];
 
 export const PARSE_IMPL_NAMES: Record<ParseImpl, string> = {
@@ -16,6 +16,7 @@ export const PARSE_IMPL_NAMES: Record<ParseImpl, string> = {
     pdf2md: "pdf2md (@opendocsg/pdf2md)",
     officeparser: "officeparser",
     readability: "Readability (@mozilla/readability)",
+    mupdf: "MuPDF.js (mupdf)",
 };
 
 /** Extensions officeparser reads (of the formats this slot routes elsewhere by default). */
@@ -28,6 +29,7 @@ export function implSupports(impl: ParseImpl, format: DocFormat, ext: string): b
             return true;
         case "pdfium":
         case "pdf2md":
+        case "mupdf":
             return format === "pdf";
         case "readability":
             return format === "html";

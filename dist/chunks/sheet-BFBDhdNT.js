@@ -1,0 +1,3 @@
+import{t as e}from"./markdown-B9Szs29K.js";async function t(t){let[n,r]=await Promise.all([import(`./xlsx-Bm3a-Vql.js`),import(`./cpexcel.full-DZfo9zOa.js`)]);n.set_cptable(r);let i=n.read(t,{type:`array`,cellDates:!0,cellHTML:!1,cellStyles:!1}),a=[];for(let t of i.SheetNames){let r=i.Sheets[t];if(!r)continue;let o=n.utils.sheet_to_json(r,{header:1,raw:!1,defval:``,blankrows:!1}),s=e(o);a.push(`## ${t}\n\n${s||`_(empty sheet)_`}`)}return a.join(`
+
+`)}export{t as parseSheet};

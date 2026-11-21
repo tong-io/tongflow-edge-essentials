@@ -8,8 +8,10 @@
  * token. That pushes the answer away from the instruction's own words (「无法辨认」) and
  * from text the user quoted. These processors skip the first `promptTokens` ids.
  *
- * Not used for LFM2.5 (`gen-text`): a 1.05 penalty made it swap repeated CJK characters for
- * wrong ones (万 → 兆). Pure logic, unit tested in Node.
+ * Also used for Qwen3.5 text (`gen-text` model `qwen3.5-0.8b-text`), there after the JSON-schema
+ * constraint and never leaving a step without an allowed token. Not used for LFM2.5 (`gen-text`
+ * default): a 1.05 penalty made it swap repeated CJK characters for wrong ones (万 → 兆).
+ * Pure logic, unit tested in Node.
  */
 
 export interface RepeatControl {
@@ -50,15 +52,28 @@ export function applyRepeatControl(generated: ArrayLike<bigint | number>, logits
 type Callable = new () => { _call(ids: bigint[][], logits: unknown): unknown };
 
 /**
+ * {@link applyRepeatControl}, but a row it would leave without any finite logit (the n-gram ban
+ * hit the only token a grammar constraint still allows) keeps its logits unchanged.
+ */
+export function applyRepeatControlFeasible(generated: ArrayLike<bigint | number>, logits: Float32Array, rc: RepeatControl): void {
+    const before = logits.slice();
+    applyRepeatControl(generated, logits, rc);
+    for (let i = 0; i < logits.length; i++) if (logits[i]! > -Infinity) return;
+    logits.set(before);
+}
+
+/**
  * A transformers.js logits processor applying {@link applyRepeatControl} to the ids after the
  * prompt. `tf` is the lazily loaded transformers.js module (its `LogitsProcessor` base class).
+ * `feasible`: run after a constraint, never ban every allowed token ({@link applyRepeatControlFeasible}).
  */
-export function generatedRepeatProcessor(tf: { LogitsProcessor: unknown }, promptTokens: number, rc: RepeatControl): unknown {
+export function generatedRepeatProcessor(tf: { LogitsProcessor: unknown }, promptTokens: number, rc: RepeatControl, opts: { feasible?: boolean } = {}): unknown {
     const Base = tf.LogitsProcessor as Callable;
+    const apply = opts.feasible ? applyRepeatControlFeasible : applyRepeatControl;
     class GeneratedRepeatProcessor extends Base {
         override _call(ids: bigint[][], logits: unknown) {
             const rows = logits as { data: Float32Array }[];
-            for (let i = 0; i < ids.length; i++) applyRepeatControl(ids[i]!.slice(promptTokens), rows[i]!.data, rc);
+            for (let i = 0; i < ids.length; i++) apply(ids[i]!.slice(promptTokens), rows[i]!.data, rc);
             return logits;
         }
     }

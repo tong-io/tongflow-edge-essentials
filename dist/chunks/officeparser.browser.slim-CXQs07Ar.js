@@ -1,0 +1,1 @@
+export{r as OfficeConverter,f as OfficeErrorType,c as OfficeGenerator,d as OfficeParser,i as OfficeTemplate,l as OfficeWarningType,s as convert,n as default,t as generate,u as parseOffice,o as renderTemplate,a as terminateOcr}from"./officeparser-D4b2HRk7.js";

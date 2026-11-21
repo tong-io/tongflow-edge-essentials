@@ -12,6 +12,7 @@ import { metaFloats, metaInt, readOnnxMetadata } from "../ml/onnx-meta.js";
 import { fetchModelFile } from "../models/hub.js";
 import { SENSEVOICE } from "../models/registry.js";
 import { Fbank, SENSEVOICE_FBANK } from "./fbank.js";
+import type { TimedToken } from "./timestamps.js";
 
 export const SENSEVOICE_LANGUAGES = ["auto", "zh", "en", "ja", "ko", "yue"] as const;
 export type SenseVoiceLanguage = (typeof SENSEVOICE_LANGUAGES)[number];
@@ -55,7 +56,13 @@ export function applyLfr(feats: Float32Array, dim: number, windowSize: number, w
 
 /** CTC greedy search over [frames × vocab] logits: argmax, drop repeats and blank. */
 export function ctcGreedy(logits: Float32Array, frames: number, vocab: number, blank = 0): number[] {
+    return ctcGreedyFrames(logits, frames, vocab, blank).tokens;
+}
+
+/** {@link ctcGreedy} with the output frame of each token (sherpa-onnx's CTC timestamps). */
+export function ctcGreedyFrames(logits: Float32Array, frames: number, vocab: number, blank = 0): { tokens: number[]; frames: number[] } {
     const tokens: number[] = [];
+    const at: number[] = [];
     let prev = -1;
     for (let t = 0; t < frames; t++) {
         const row = t * vocab;
@@ -68,10 +75,13 @@ export function ctcGreedy(logits: Float32Array, frames: number, vocab: number, b
                 best = v;
             }
         }
-        if (best !== blank && best !== prev) tokens.push(best);
+        if (best !== blank && best !== prev) {
+            tokens.push(best);
+            at.push(t);
+        }
         prev = best;
     }
-    return tokens;
+    return { tokens, frames: at };
 }
 
 export function parseTokens(text: string): string[] {
@@ -87,10 +97,21 @@ export function parseTokens(text: string): string[] {
     return syms;
 }
 
+/** SenseVoice's text from its token texts (a leading `▁` already a space). */
+export function senseVoiceText(tokens: readonly string[]): string {
+    return tokens.join("").trim();
+}
+
 export interface SenseVoiceResult {
     text: string;
     /** Detected language tag without brackets, e.g. "zh". */
     language: string;
+    /**
+     * The text tokens with their times in seconds, as sherpa-onnx computes them:
+     * `(frame - 4) × lfr_window_shift × 10 ms` (the first four output frames are the
+     * language, emotion, event and ITN queries).
+     */
+    tokens: TimedToken[];
 }
 
 interface Meta {
@@ -147,7 +168,7 @@ export class SenseVoice {
     async recognize(samples: Float32Array, language: SenseVoiceLanguage = "auto"): Promise<SenseVoiceResult> {
         const { data: fb } = this.fbank.compute(samples);
         const { data: x, frames } = applyLfr(fb, this.fbank.dim, this.meta.lfrWindow, this.meta.lfrShift);
-        if (!frames) return { text: "", language: "" };
+        if (!frames) return { text: "", language: "", tokens: [] };
         const dim = this.meta.negMean.length;
         const { negMean, invStd } = this.meta;
         for (let f = 0; f < frames; f++) {
@@ -164,16 +185,18 @@ export class SenseVoice {
         const out = await this.session.run(feeds);
         const logits = out.logits!;
         const [, outFrames, vocab] = logits.dims as number[];
-        const tokens = ctcGreedy(logits.data as Float32Array, outFrames!, vocab!);
+        const { tokens, frames: at } = ctcGreedyFrames(logits.data as Float32Array, outFrames!, vocab!);
         for (const t of Object.values(out)) t.dispose();
         for (const t of Object.values(feeds)) t.dispose();
         const lang = tokens.length >= 1 ? (this.syms[tokens[0]!] ?? "") : "";
-        let text = "";
-        for (const id of tokens.slice(4)) {
-            const s = this.syms[id] ?? "";
+        const shiftS = (this.meta.lfrShift * 10) / 1000;
+        const timed: TimedToken[] = [];
+        for (let i = 4; i < tokens.length; i++) {
+            const s = this.syms[tokens[i]!] ?? "";
             if (/^<\|.*\|>$/.test(s)) continue;
-            text += s.replace(/^▁/, " ");
+            timed.push({ text: s.replace(/^▁/, " "), time: Math.max(0, (at[i]! - 4) * shiftS) });
         }
-        return { text: text.trim(), language: lang.replace(/^<\|(.*)\|>$/, "$1") };
+        const text = senseVoiceText(timed.map((t) => t.text));
+        return { text, language: lang.replace(/^<\|(.*)\|>$/, "$1"), tokens: timed };
     }
 }

@@ -1,0 +1,1 @@
+export{t as WorkerMessageHandler}from"./pdfjs-worker-DtaE7gZw.js";

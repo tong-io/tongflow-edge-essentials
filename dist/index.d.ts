@@ -1,7 +1,7 @@
 /**
  * tongflow-edge-essentials: browser edge nodes (T0 zero-model nodes, knowledge-base nodes,
  * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, EmbeddingGemma 2, LFM2.5-350M; and the T2 audio nodes:
- * SenseVoiceSmall, Silero VAD, pyannote + CAM++, CED-tiny; and the media nodes on
+ * SenseVoiceSmall or X-ASR zh-en, Silero VAD, pyannote + CAM++, CED-tiny; and the media nodes on
  * Mediabunny + WebCodecs with ffmpeg.wasm as fallback / selectable implementation).
  *
  * The default export is `defineEdgePlugin({ methods })`: loaded in a dedicated Web
@@ -55,6 +55,8 @@ interface ModelVariant {
   external?: boolean;
 }
 interface T3Model {
+  /** Generation stops at any of these token ids (overrides the repo's `generation_config.json`). */
+  eosTokenIds?: number[];
   /** The id hosts pick in the node's model dropdown (manifest `models`). */
   id: string;
   /** Display name. */
@@ -69,7 +71,7 @@ interface T3Model {
   f16: ModelVariant;
   fallback: ModelVariant;
 }
-export declare const T3_MODELS: readonly [T3Model, T3Model, T3Model, T3Model];
+export declare const T3_MODELS: readonly [T3Model, T3Model, T3Model, T3Model, T3Model];
 /** Every file a model needs under its repo dir, for both variants (what the host must mirror). */
 export declare function hostedFiles(model: T3Model): string[];
 /**
@@ -97,6 +99,7 @@ export declare const methods: {
   embedImage: import("tongflow/engine/worker").EdgeMethod<"embed-image">;
   genText: import("tongflow/engine/worker").EdgeMethod<"gen-text">;
   transcribe: import("tongflow/engine/worker").EdgeMethod<"transcribe">;
+  transcribeTimestamp: import("tongflow/engine/worker").EdgeMethod<"transcribe-timestamp">;
   vadSegment: import("tongflow/engine/worker").EdgeMethod<"vad-segment">;
   diarizeSpeakers: import("tongflow/engine/worker").EdgeMethod<"diarize-speakers">;
   audioTag: import("tongflow/engine/worker").EdgeMethod<"audio-tag">;
@@ -133,6 +136,7 @@ export declare const slots: {
   readonly "gen-text": "genText";
   readonly "ocr-image": "ocrImage";
   readonly transcribe: "transcribe";
+  readonly "transcribe-timestamp": "transcribeTimestamp";
   readonly "vad-segment": "vadSegment";
   readonly "diarize-speakers": "diarizeSpeakers";
   readonly "audio-tag": "audioTag";
@@ -145,6 +149,7 @@ export declare const slots: {
 /** The slot implementations against the internal context (for hosts and tests that bring their own). */
 export declare const impls: {
   transcribe: SlotImpl<"transcribe">;
+  transcribeTimestamp: SlotImpl<"transcribe-timestamp">;
   vadSegment: SlotImpl<"vad-segment">;
   diarizeSpeakers: SlotImpl<"diarize-speakers">;
   audioTag: SlotImpl<"audio-tag">;
@@ -190,6 +195,7 @@ declare const _default: {
     embedImage: import("tongflow/engine/worker").EdgeMethod<"embed-image">;
     genText: import("tongflow/engine/worker").EdgeMethod<"gen-text">;
     transcribe: import("tongflow/engine/worker").EdgeMethod<"transcribe">;
+    transcribeTimestamp: import("tongflow/engine/worker").EdgeMethod<"transcribe-timestamp">;
     vadSegment: import("tongflow/engine/worker").EdgeMethod<"vad-segment">;
     diarizeSpeakers: import("tongflow/engine/worker").EdgeMethod<"diarize-speakers">;
     audioTag: import("tongflow/engine/worker").EdgeMethod<"audio-tag">;

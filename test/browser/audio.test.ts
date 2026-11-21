@@ -121,6 +121,40 @@ describe.skipIf(!haveModels)("real models from EDGE_MODELS_DIR (served at /model
         });
     }, 900_000);
 
+    it("transcribe (x-asr-zh-en): X-ASR, Chinese with punctuation, from the model base", async () => {
+        const audio = await dialog();
+        const r = await time(`transcribe x-asr, first call (21 s ${audio.filename})`, () => call("transcribe", { audio }, { model: "x-asr-zh-en" }));
+        expect(r.out.error).toBeUndefined();
+        expect(r.out.text).toContain("大家好，今天我们讨论一下下个季度的产品计划。");
+        expect(r.out.text).toContain("第三是售后服务。");
+        const files = new Set(r.downloads.map((d) => d.file));
+        for (const f of ["encoder-epoch-99-avg-1.int8.onnx", "decoder-epoch-99-avg-1.onnx", "joiner-epoch-99-avg-1.int8.onnx", "tokens.txt"]) {
+            expect(files).toContain(`mogenle/sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03/${f}`);
+        }
+        const again = await time("transcribe x-asr, second call (model loaded)", () => call("transcribe", { audio }, { model: "x-asr-zh-en" }));
+        expect(again.out.text).toBe(r.out.text);
+    }, 900_000);
+
+    it("transcribe-timestamp: sentence segments in order and inside the audio (SenseVoice and X-ASR)", async () => {
+        const audio = await dialog();
+        for (const model of ["sensevoice-small", "x-asr-zh-en"]) {
+            const r = await time(`transcribe-timestamp ${model} 21 s`, () => call("transcribeTimestamp", { audio }, { model }));
+            expect(r.out.error).toBeUndefined();
+            const ts = r.out.time_stamps as { start: number; end: number; text: string }[];
+            console.warn(`[audio] ${model}`, JSON.stringify(ts));
+            expect(ts.length).toBeGreaterThanOrEqual(4);
+            expect(ts.map((s) => s.text).join("")).toBe(r.out.text);
+            ts.forEach((s, i) => {
+                expect(Object.keys(s).sort()).toEqual(["end", "start", "text"]);
+                expect(s.start).toBeGreaterThanOrEqual(i ? ts[i - 1]!.end : 0);
+                expect(s.end).toBeGreaterThan(s.start);
+                expect(s.end).toBeLessThanOrEqual(21.1);
+            });
+            expect(ts[0]!.start).toBeGreaterThan(0.6);
+            expect(ts[0]!.start).toBeLessThan(1.3);
+        }
+    }, 900_000);
+
     it("vad-segment: 4 utterances → 4 WAV AudioRefs (16 kHz mono)", async () => {
         const r = await time("vad-segment 21 s", async () => call("vadSegment", { audio: await dialog() }));
         expect(r.out.error).toBeUndefined();

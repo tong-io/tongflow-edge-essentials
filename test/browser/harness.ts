@@ -64,6 +64,7 @@ const SLOT_OF: Record<string, string> = {
     embedText: "embed-text",
     kbWrite: "kb-write",
     transcribe: "transcribe",
+    transcribeTimestamp: "transcribe-timestamp",
     vadSegment: "vad-segment",
     diarizeSpeakers: "diarize-speakers",
     audioTag: "audio-tag",

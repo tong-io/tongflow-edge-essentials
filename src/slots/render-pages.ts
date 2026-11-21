@@ -4,19 +4,29 @@ import { encodeBase64 } from "../util/base64.js";
 import { EdgeError, throwIfAborted } from "../util/errors.js";
 import { fileStem } from "../util/text.js";
 import { guard, readAsset } from "./common.js";
+import { pdfImpl } from "./parse-document.js";
 
 /** 150 DPI: legible for OCR (PP-OCR's sweet spot is ~150–200) at a moderate PNG size. */
 export const RENDER_DPI = 150;
 /** Longest side cap, so a poster-size page does not allocate a gigapixel canvas. */
 export const RENDER_MAX_SIDE = 4096;
 
-/** `render-pages`: PDF → one PNG per page (pdf.js + OffscreenCanvas; browser only). */
+/**
+ * `render-pages`: PDF → one PNG per page. Default pdf.js + OffscreenCanvas (browser only);
+ * model `mupdf` renders with MuPDF.js's own rasterizer (also in Node), same DPI rules.
+ */
 export const renderPages: SlotImpl<"render-pages"> = (input, ctx) =>
     guard(ctx, async () => {
+        const impl = pdfImpl(ctx, "render-pages");
         const doc = input.document;
         const bytes = readAsset(doc, "document");
         const format = detectFormat(doc.mime, doc.filename, bytes);
         if (format !== "pdf") throw new EdgeError(`render-pages renders PDF only (got ${format ?? doc.mime ?? "unknown format"})`);
+        if (impl === "mupdf") {
+            const { renderPagesMupdf } = await import("../formats/mupdf.js");
+            const pages = await renderPagesMupdf(bytes, ctx, { filename: doc.filename, dpi: RENDER_DPI, maxSide: RENDER_MAX_SIDE });
+            return { success: true, pages };
+        }
         if (typeof OffscreenCanvas === "undefined") {
             throw new EdgeError("render-pages needs OffscreenCanvas (a browser); it is not available here");
         }

@@ -1,5 +1,6 @@
 /**
- * T2 audio slots: `transcribe` (SenseVoiceSmall), `vad-segment` (Silero VAD),
+ * T2 audio slots: `transcribe` (SenseVoiceSmall; X-ASR zh-en behind model `x-asr-zh-en`),
+ * `transcribe-timestamp` (the same recognizers, sentence-level times), `vad-segment` (Silero VAD),
  * `diarize-speakers` (pyannote segmentation-3.0 + 3D-Speaker CAM++) and
  * `audio-tag` (CED-tiny). The work lives in a lazy chunk (src/audio/pipeline.ts)
  * so the plugin entry stays small; onnxruntime-web is a second lazy chunk.
@@ -14,6 +15,13 @@ export const transcribe: SlotImpl<"transcribe"> = (input, ctx) =>
         const bytes = readAsset(input.audio, "audio");
         const text = await (await pipeline()).transcribe(bytes, input.language, ctx, input.audio.filename);
         return { success: true, text };
+    });
+
+export const transcribeTimestamp: SlotImpl<"transcribe-timestamp"> = (input, ctx) =>
+    guard(ctx, async () => {
+        const bytes = readAsset(input.audio, "audio");
+        const { text, time_stamps } = await (await pipeline()).transcribeTimestamp(bytes, input.language, ctx, input.audio.filename);
+        return { success: true, text, time_stamps };
     });
 
 export const vadSegment: SlotImpl<"vad-segment"> = (input, ctx) =>

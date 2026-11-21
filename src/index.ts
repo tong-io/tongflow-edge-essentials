@@ -1,7 +1,7 @@
 /**
  * tongflow-edge-essentials: browser edge nodes (T0 zero-model nodes, knowledge-base nodes,
  * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, EmbeddingGemma 2, LFM2.5-350M; and the T2 audio nodes:
- * SenseVoiceSmall, Silero VAD, pyannote + CAM++, CED-tiny; and the media nodes on
+ * SenseVoiceSmall or X-ASR zh-en, Silero VAD, pyannote + CAM++, CED-tiny; and the media nodes on
  * Mediabunny + WebCodecs with ffmpeg.wasm as fallback / selectable implementation).
  *
  * The default export is `defineEdgePlugin({ methods })`: loaded in a dedicated Web
@@ -13,7 +13,7 @@
 import { defineEdgePlugin, edgeMethod, type EdgeMethodContext } from "tongflow/engine/worker";
 import { type EdgeContext, toEdgeContext } from "./context.js";
 import { chunkText } from "./slots/chunk-text.js";
-import { audioTag, diarizeSpeakers, transcribe, vadSegment } from "./slots/audio.js";
+import { audioTag, diarizeSpeakers, transcribe, transcribeTimestamp, vadSegment } from "./slots/audio.js";
 import { detectLanguage } from "./slots/detect-language.js";
 import { embedText } from "./slots/embed-text.js";
 import type { VisionTextInput } from "./slots/image-gen-text.js";
@@ -117,6 +117,7 @@ export const methods = {
     embedImage: bind("embed-image", t3.embedImage),
     genText: bind("gen-text", t3.genText),
     transcribe: bind("transcribe", transcribe),
+    transcribeTimestamp: bind("transcribe-timestamp", transcribeTimestamp),
     vadSegment: bind("vad-segment", vadSegment),
     diarizeSpeakers: bind("diarize-speakers", diarizeSpeakers),
     audioTag: bind("audio-tag", audioTag),
@@ -149,6 +150,7 @@ export const slots = {
     "gen-text": "genText",
     "ocr-image": "ocrImage",
     transcribe: "transcribe",
+    "transcribe-timestamp": "transcribeTimestamp",
     "vad-segment": "vadSegment",
     "diarize-speakers": "diarizeSpeakers",
     "audio-tag": "audioTag",
@@ -175,6 +177,7 @@ export const impls = {
     kbWrite,
     ...t3,
     transcribe,
+    transcribeTimestamp,
     vadSegment,
     diarizeSpeakers,
     audioTag,
