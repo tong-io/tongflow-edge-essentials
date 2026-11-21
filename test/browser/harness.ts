@@ -49,6 +49,9 @@ const SLOT_OF: Record<string, string> = {
     extractAudio: "extract-audio",
     getFirstFrame: "get-first-frame",
     detectLanguage: "detect-language",
+    chunkText: "chunk-text",
+    embedText: "embed-text",
+    kbWrite: "kb-write",
 };
 
 /** Invoke one plugin method over the worker protocol. */
