@@ -23,7 +23,7 @@ const SUPPLEMENT_RADICALS: Record<string, string> = {
     "\u2EEA": "黾", "\u2EEC": "齐", "\u2EEE": "齿", "\u2EF0": "龙", "\u2EF3": "龟",
 };
 
-function normalizeRadicals(s: string): string {
+export function normalizeRadicals(s: string): string {
     return s.replace(/[\u2E80-\u2EFF\u2F00-\u2FDF]/g, (c) => SUPPLEMENT_RADICALS[c] ?? c.normalize("NFKC"));
 }
 

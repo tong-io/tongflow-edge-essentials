@@ -20,6 +20,9 @@ const COPIES = [
     ["pdfjs-dist/LICENSE", "pdfjs/LICENSE"],
     ["@xberg-io/xberg-wasm/pkg/web/xberg_wasm_bg.wasm", "xberg/xberg_wasm_bg.wasm"], // legacy formats (~41 MB)
     ["@xberg-io/xberg-wasm/LICENSE", "xberg/LICENSE"],
+    ["@embedpdf/pdfium/dist/pdfium.wasm", "pdfium/pdfium.wasm"], // parse-document's `pdfium` alternative (~4.6 MB)
+    ["@embedpdf/pdfium/LICENSE", "pdfium/LICENSE"],
+    ["@embedpdf/pdfium/LICENSE.pdfium", "pdfium/LICENSE.pdfium"],
     // onnxruntime-web (the version pinned in package.json): the WebGPU-capable
     // wasm build transformers.js loads through env.backends.onnx.wasm.wasmPaths.
     ["onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm", "ort/ort-wasm-simd-threaded.asyncify.wasm"], // ~29 MB

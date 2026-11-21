@@ -81,13 +81,15 @@ function forPdfjs(url: string): string {
     return url;
 }
 
-export async function openPdf(bytes: Uint8Array, ctx: EdgeContext): Promise<PdfDocument> {
-    const pdfjs = await loadPdfjs();
+/**
+ * The `getDocument` parameters this plugin uses: assets (CMaps, standard fonts, decoders) from
+ * the plugin's own `dist/assets/pdfjs/`, and in a DOM-less worker an OffscreenCanvas factory.
+ * Shared by {@link openPdf} and the pdf2md alternative (`pdf2md.ts`), which calls pdf.js itself.
+ */
+export function pdfjsParams(ctx: EdgeContext): Record<string, unknown> {
     const workerEnv = !isNode && !hasDom;
     const fonts = (globalThis as { fonts?: unknown }).fonts;
     const params: Record<string, unknown> = {
-        // pdf.js may transfer the buffer it is given; keep the caller's bytes intact.
-        data: bytes.slice(),
         cMapUrl: forPdfjs(ctx.resolveAsset("assets/pdfjs/cmaps/")),
         cMapPacked: true,
         standardFontDataUrl: forPdfjs(ctx.resolveAsset("assets/pdfjs/standard_fonts/")),
@@ -109,6 +111,13 @@ export async function openPdf(bytes: Uint8Array, ctx: EdgeContext): Promise<PdfD
             params.useSystemFonts = false;
         }
     }
+    return params;
+}
+
+export async function openPdf(bytes: Uint8Array, ctx: EdgeContext): Promise<PdfDocument> {
+    const pdfjs = await loadPdfjs();
+    // pdf.js may transfer the buffer it is given; keep the caller's bytes intact.
+    const params = { data: bytes.slice(), ...pdfjsParams(ctx) };
     const task = pdfjs.getDocument(params as unknown as Parameters<PdfJsModule["getDocument"]>[0]);
     const onAbort = () => void task.destroy();
     ctx.signal.addEventListener("abort", onAbort, { once: true });

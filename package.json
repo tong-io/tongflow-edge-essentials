@@ -49,9 +49,12 @@
         "node": ">=20"
     },
     "dependencies": {
+        "@embedpdf/pdfium": "2.15.1",
         "@huggingface/transformers": "4.3.2",
         "@huggingface/transformers-structured-output": "4.3.2",
         "@kenjiuno/msgreader": "1.29.0",
+        "@mozilla/readability": "0.6.0",
+        "@opendocsg/pdf2md": "0.4.0",
         "@xberg-io/xberg-wasm": "1.4.2",
         "@zip.js/zip.js": "2.25.0",
         "defuddle": "0.19.13",
@@ -60,6 +63,7 @@
         "mammoth": "1.13.0",
         "marked": "18.2.1",
         "mediabunny": "1.66.2",
+        "officeparser": "8.9.0",
         "onnxruntime-web": "1.31.1",
         "papaparse": "5.7.1",
         "pdfjs-dist": "6.5.438",
