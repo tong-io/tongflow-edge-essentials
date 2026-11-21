@@ -93,81 +93,76 @@ interface AsrPipeline {
     dispose(): Promise<void>;
 }
 
-/** A loaded WebGPU recognizer for one recording. */
+/** A WebGPU recognizer for one recording (the language is fixed on its first piece). */
 export interface WebGpuAsr {
-    /** Whisper: the language to force for the rest of the recording (detected on `samples`). */
-    prepare(samples: Float32Array): Promise<void>;
     recognize(samples: Float32Array): Promise<string>;
+    /** Whisper with segment timestamps (seconds within the piece). */
+    recognizeTimed(samples: Float32Array): Promise<{ text: string; chunks: { timestamp: (number | null)[]; text: string }[] }>;
     /** The language actually used (detected or given). */
     readonly language: string | undefined;
 }
 
-async function loadSpec(ctx: EdgeContext, model: T3Model) {
+async function loadSpec(model: T3Model) {
     const gpu = await requireWebGPU();
     if (model === COHERE_T3 && !gpu.f16) {
         throw new EdgeError(
             "Cohere Transcribe needs a WebGPU adapter with shader-f16 (its only browser-sized weights are q4f16); this GPU lacks it",
         );
     }
-    return { model, variant: gpu.f16 ? model.f16 : model.fallback };
+    return gpu.f16 ? model.f16 : model.fallback;
 }
 
 /**
- * Run `use` with a recognizer for `modelId` (`whisper-large-v3-turbo` or
- * `cohere-transcribe-03-2026`); the model is loaded on first use and shared.
+ * A recognizer for `modelId` (`whisper-large-v3-turbo` or `cohere-transcribe-03-2026`).
+ * Every piece runs through the shared T3 runtime (`withModel`): the model loads on the
+ * first piece and stays resident for the next ones and later nodes.
  */
-export async function withWebGpuAsr<R>(
-    ctx: EdgeContext,
-    modelId: string,
-    language: string | undefined,
-    use: (asr: WebGpuAsr) => Promise<R>,
-): Promise<R> {
+export async function webGpuAsr(ctx: EdgeContext, modelId: string, language: string | undefined): Promise<WebGpuAsr> {
     const model = modelId === COHERE_T3.id ? COHERE_T3 : WHISPER_T3;
-    const { variant } = await loadSpec(ctx, model);
+    const variant = await loadSpec(model);
     const cohereLang = model === COHERE_T3 ? cohereLanguage(language) : undefined;
-    return withModel<AsrPipeline, R>(
-        ctx,
-        {
-            model,
-            variant,
-            load: async (tf, progress_callback) => {
-                const make = tf.pipeline as unknown as (task: string, repo: string, o: object) => Promise<AsrPipeline>;
-                const p = await make("automatic-speech-recognition", model.repo, { dtype: variant.dtype, device: "webgpu", progress_callback });
-                return { value: p, dispose: () => p.dispose() };
-            },
+    const spec = {
+        model,
+        variant,
+        load: async (tf: Parameters<Parameters<typeof withModel>[1]["load"]>[0], progress_callback: (p: never) => void) => {
+            const make = tf.pipeline as unknown as (task: string, repo: string, o: object) => Promise<AsrPipeline>;
+            const p = await make("automatic-speech-recognition", model.repo, { dtype: variant.dtype, device: "webgpu", progress_callback });
+            return { value: p, dispose: () => p.dispose() };
         },
-        async (p) => {
-            if (model === COHERE_T3) {
-                const asr: WebGpuAsr = {
-                    language: cohereLang,
-                    prepare: async () => {},
-                    recognize: async (samples) => {
-                        // generation_config has no length: default 20 tokens would cut the text.
-                        const maxNew = Math.min(1024, Math.ceil((samples.length / 16000) * 12) + 24);
-                        const r = await p(samples, { language: cohereLang, max_new_tokens: maxNew });
-                        return r.text.trim();
-                    },
+    };
+    const run = <R>(use: (p: AsrPipeline) => Promise<R>) => withModel<AsrPipeline, R>(ctx, spec, use);
+    let lang = model === WHISPER_T3 ? isoLanguage(language) : cohereLang;
+    const whisperLang = async (p: AsrPipeline, samples: Float32Array) => {
+        if (!lang) {
+            lang = (await detectWhisperLanguage(p, samples)) ?? "zh";
+            ctx.onProgress({ message: `Whisper detected language: ${lang}` });
+        }
+        return lang;
+    };
+    return {
+        get language() {
+            return lang;
+        },
+        recognize: (samples) =>
+            run(async (p) => {
+                if (model === COHERE_T3) {
+                    // generation_config has no length: the default 20 tokens would cut the text.
+                    const maxNew = Math.min(1024, Math.ceil((samples.length / 16000) * 12) + 24);
+                    return (await p(samples, { language: cohereLang, max_new_tokens: maxNew })).text.trim();
+                }
+                const l = await whisperLang(p, samples);
+                return (await p(samples, { language: l, task: "transcribe", return_timestamps: false })).text.trim();
+            }),
+        recognizeTimed: (samples) =>
+            run(async (p) => {
+                const l = await whisperLang(p, samples);
+                const r = (await p(samples, { language: l, task: "transcribe", return_timestamps: true })) as {
+                    text: string;
+                    chunks?: { timestamp: (number | null)[]; text: string }[];
                 };
-                return use(asr);
-            }
-            let lang = isoLanguage(language);
-            const asr: WebGpuAsr = {
-                get language() {
-                    return lang;
-                },
-                prepare: async (samples) => {
-                    if (lang) return;
-                    lang = (await detectWhisperLanguage(p, samples)) ?? "zh";
-                    ctx.onProgress({ message: `Whisper detected language: ${lang}` });
-                },
-                recognize: async (samples) => {
-                    const r = await p(samples, { language: lang ?? "zh", task: "transcribe", return_timestamps: false });
-                    return r.text.trim();
-                },
-            };
-            return use(asr);
-        },
-    );
+                return { text: r.text.trim(), chunks: r.chunks ?? [{ timestamp: [0, samples.length / 16000], text: r.text }] };
+            }),
+    };
 }
 
 /** One decoder step after `<|startoftranscript|>`: the most likely language token. */

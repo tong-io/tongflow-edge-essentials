@@ -19,19 +19,45 @@ import { tagAudio } from "./tagging.js";
 import { detectSpeech, loadVad, mergeSpans, VAD_DEFAULTS, type VadOptions } from "./vad.js";
 import { encodeWav } from "./wav.js";
 import { checkpoint } from "./checkpoint.js";
+import {
+    ALT_DIARIZE_MODELS,
+    ALT_TIMESTAMP_MODELS,
+    ALT_TRANSCRIBE_MODELS,
+    altRecognizer,
+    diarizeAlt,
+    isAltDiarize,
+    isAltTranscribe,
+} from "./alternatives.js";
 
 /**
  * Model ids as listed in tongflow.plugin.json `slots[].models` (first = default).
  * `<model>+ffmpeg-wasm` is the same model with the input decoded by ffmpeg.wasm
  * instead of WebCodecs ("换实现"); the default falls back to ffmpeg by itself.
  */
+/** `[a, a+ffmpeg-wasm, b, b+ffmpeg-wasm, …]`. */
+function withFfmpeg(ids: readonly string[]): string[] {
+    return ids.flatMap((id) => [id, `${id}${FFMPEG_SUFFIX}`]);
+}
+
 export const SLOT_MODELS = {
-    transcribe: ["sensevoice-small", `sensevoice-small${FFMPEG_SUFFIX}`, "x-asr-zh-en", `x-asr-zh-en${FFMPEG_SUFFIX}`],
-    "transcribe-timestamp": ["sensevoice-small", `sensevoice-small${FFMPEG_SUFFIX}`, "x-asr-zh-en", `x-asr-zh-en${FFMPEG_SUFFIX}`],
+    transcribe: [
+        "sensevoice-small",
+        `sensevoice-small${FFMPEG_SUFFIX}`,
+        "x-asr-zh-en",
+        `x-asr-zh-en${FFMPEG_SUFFIX}`,
+        ...withFfmpeg(ALT_TRANSCRIBE_MODELS),
+    ],
+    "transcribe-timestamp": [
+        "sensevoice-small",
+        `sensevoice-small${FFMPEG_SUFFIX}`,
+        "x-asr-zh-en",
+        `x-asr-zh-en${FFMPEG_SUFFIX}`,
+        ...withFfmpeg(ALT_TIMESTAMP_MODELS),
+    ],
     "vad-segment": ["silero-vad-v5", `silero-vad-v5${FFMPEG_SUFFIX}`],
-    "diarize-speakers": ["pyannote-campplus-zh", `pyannote-campplus-zh${FFMPEG_SUFFIX}`],
+    "diarize-speakers": ["pyannote-campplus-zh", `pyannote-campplus-zh${FFMPEG_SUFFIX}`, ...withFfmpeg(ALT_DIARIZE_MODELS)],
     "audio-tag": ["ced-tiny", `ced-tiny${FFMPEG_SUFFIX}`],
-} as const;
+} as const satisfies Record<string, readonly string[]>;
 
 function checkModel(ctx: EdgeContext, slot: keyof typeof SLOT_MODELS): void {
     const allowed: readonly string[] = SLOT_MODELS[slot];
@@ -97,7 +123,10 @@ interface Recognizer {
     join(tokens: string[]): string;
 }
 
-function recognizer(ctx: EdgeContext, language: string | undefined): Recognizer {
+function recognizer(ctx: EdgeContext, language: string | undefined, timestamps = false): Recognizer {
+    // The alternatives (alternatives.ts): Whisper, Cohere Transcribe, Qwen3-ASR, Zipformer-CTC.
+    const base = baseModel(ctx.model);
+    if (isAltTranscribe(base)) return altRecognizer(base, language, timestamps);
     // `x-asr-zh-en+ffmpeg-wasm` is X-ASR with the audio decoded by ffmpeg.wasm (see `decode`).
     if (baseModel(ctx.model) === "x-asr-zh-en") {
         // X-ASR is Chinese/English only and detects which by itself: the language hint is not used.
@@ -161,7 +190,7 @@ async function recognizeAudio(
     filename?: string,
 ): Promise<Recognized> {
     const audio = await decode(ctx, bytes, filename);
-    const rec = recognizer(ctx, language);
+    const rec = recognizer(ctx, language, withSpans);
     ctx.onProgress({ fraction: 0.1, message: `loading ${rec.name}` });
     const onePass = audio.duration <= ONE_PASS_S;
     const [model] = await Promise.all([rec.load(ctx), onePass && !withSpans ? Promise.resolve() : loadVad(ctx)]);
@@ -231,6 +260,11 @@ export async function vadSegment(bytes: Uint8Array, filename: string | undefined
 export async function diarizeSpeakers(bytes: Uint8Array, ctx: EdgeContext, filename?: string): Promise<string> {
     checkModel(ctx, "diarize-speakers");
     const audio = await decode(ctx, bytes, filename);
+    const base = baseModel(ctx.model);
+    if (isAltDiarize(base)) {
+        ctx.onProgress({ fraction: 0.1, message: "loading Nemotron-3-Diarization" });
+        return JSON.stringify(await diarizeAlt(base!, audio.samples, ctx, stage(ctx, 0.1, 1, "segmenting speakers")));
+    }
     const o: DiarizeOptions = {};
     const k = num(ctx.params?.num_speakers);
     if (k !== undefined && k >= 1) o.numSpeakers = Math.round(k);

@@ -7,7 +7,7 @@
 // WhisperFeatureExtractor), run on the same synthetic signal.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ALT_DIARIZE_MODELS, ALT_TRANSCRIBE_MODELS, joinPieces } from "../../src/audio/alternatives.js";
+import { ALT_DIARIZE_MODELS, ALT_TIMESTAMP_MODELS, ALT_TRANSCRIBE_MODELS, joinUnits, segmentTokens } from "../../src/audio/alternatives.js";
 import { COHERE_T3, WHISPER_T3, cohereLanguage, isoLanguage, whisperLanguageOf } from "../../src/audio/asr-webgpu.js";
 import { byteBpeTable, decodeByteBpe, isByteBpe } from "../../src/audio/bbpe.js";
 import { logitsToSegments, nemoLogMel, slaneyMelBank, SpeakerCache } from "../../src/audio/nemotron.js";
@@ -25,7 +25,7 @@ import {
     trimDegenerateTail,
     whisperLogMel,
 } from "../../src/audio/qwen3-asr.js";
-import { ctcTokensToText } from "../../src/audio/zipformer-ctc.js";
+import { ctcTokensToText, timedUnits } from "../../src/audio/zipformer-ctc.js";
 import { hostedFiles } from "../../src/ml/catalog.js";
 import { normalizeRowsL2 } from "../../src/ml/bge.js";
 import { BGE_QUERY_INSTRUCTION, EMBED_MODELS, HARRIER_QUERY_INSTRUCTION, resolveEmbedModel } from "../../src/ml/models.js";
@@ -79,8 +79,27 @@ describe("byte-level BPE (icefall table) and CTC text", () => {
         expect(ctcTokensToText([1, 2, 3], ["<blk>", "▁HI", "▁THERE", "<unk>"], false)).toBe("HI THERE");
     });
 
-    it("joins pieces like the default path", () => {
-        expect(joinPieces(["你好。", " 世界", "hello", "world"])).toBe("你好。世界hello world");
+    it("times byte-BPE units per whole character, and joins them", () => {
+        const inv = new Map([...byteBpeTable().entries()].filter(([cp]) => cp !== 8263).map(([cp, b]) => [b, cp]));
+        const enc = (bytes: number[]) => bytes.map((b) => String.fromCodePoint(inv.get(b)!)).join("");
+        // 你 = e4 bd a0 in two tokens, 好 = e5 a5 bd in one, then ▁OK.
+        const syms = ["<blk>", enc([0xe4]), enc([0xbd, 0xa0]), enc([0xe5, 0xa5, 0xbd]), "\u2581OK"];
+        const units = timedUnits([1, 2, 3, 4], [10, 11, 20, 30], syms, true, 0.04);
+        expect(units).toEqual([
+            { text: "你", time: 0.4 },
+            { text: "好", time: 0.8 },
+            { text: " OK", time: 1.2 },
+        ]);
+        expect(joinUnits(units.map((u) => u.text))).toBe("你好 OK");
+        expect(joinUnits(["你", " 好", "hello", " world"])).toBe("你好hello world");
+    });
+
+    it("spreads Whisper segment times over the segment's characters", () => {
+        expect(segmentTokens([{ timestamp: [1, 2], text: " 你好" }, { timestamp: [3, null], text: "嗯" }], 4)).toEqual([
+            { text: "你", time: 1 },
+            { text: "好", time: 1.5 },
+            { text: "嗯", time: 3 },
+        ]);
     });
 });
 
@@ -299,9 +318,11 @@ describe("manifest, models.json and the alternative registry agree", () => {
         expect(models("transcribe")[0]).toBe("sensevoice-small");
         expect(models("diarize-speakers")[0]).toBe("pyannote-campplus-zh");
         expect(models("embed-text").slice(0, 2)).toEqual(["bge-small-zh-v1.5", "bge-base-zh-v1.5"]);
-        for (const id of ALT_TRANSCRIBE_MODELS) expect(models("transcribe")).toContain(id);
-        for (const id of ALT_DIARIZE_MODELS) expect(models("diarize-speakers")).toContain(id);
+        for (const id of ALT_TRANSCRIBE_MODELS) expect(models("transcribe")).toEqual(expect.arrayContaining([id, `${id}+ffmpeg-wasm`]));
+        for (const id of ALT_TIMESTAMP_MODELS) expect(models("transcribe-timestamp")).toEqual(expect.arrayContaining([id, `${id}+ffmpeg-wasm`]));
+        for (const id of ALT_DIARIZE_MODELS) expect(models("diarize-speakers")).toEqual(expect.arrayContaining([id, `${id}+ffmpeg-wasm`]));
+        expect(models("transcribe-timestamp")).not.toContain("qwen3-asr-0.6b"); // no times from the model
         expect(models("embed-text")).toEqual(expect.arrayContaining(["harrier-oss-v1-270m", "granite-embedding-97m-multilingual-r2"]));
-        expect(SLOT_MODELS.transcribe).toEqual(expect.arrayContaining([...ALT_TRANSCRIBE_MODELS]));
+        for (const slot of ["transcribe", "transcribe-timestamp", "diarize-speakers"] as const) expect(SLOT_MODELS[slot]).toEqual(models(slot));
     });
 });

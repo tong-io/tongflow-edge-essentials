@@ -32,7 +32,22 @@ describe.skipIf(!EDGE_MODELS_DIR)("alternative audio models (Node, onnxruntime-w
         );
         expect(ctx.rec.downloads.some((d) => d.label.endsWith("sherpa-onnx-zipformer-ctc-small-zh-int8-2025-07-16/model.int8.onnx"))).toBe(true);
         const hello = await impls.transcribe({ audio: wav("hello-zh.wav") }, nodeCtx(undefined, { model: "zipformer-ctc-small-zh" }));
+        expect(hello.error).toBeUndefined();
         expect(hello.text).toBe("你好世界");
+    }, 300_000);
+
+    it("transcribe-timestamp with zipformer-ctc-small-zh: sentence times from CTC frames", async () => {
+        const r = await impls.transcribeTimestamp({ audio: wav("dialog-zh.wav") }, nodeCtx(undefined, { model: "zipformer-ctc-small-zh" }));
+        expect(r.error).toBeUndefined();
+        const ts = r.time_stamps as { start: number; end: number; text: string }[];
+        console.warn(JSON.stringify(ts));
+        expect(ts.length).toBeGreaterThanOrEqual(3);
+        expect(ts.map((t) => t.text).join("")).toBe(r.text);
+        // Speech starts at 0.98 s; CTC spikes lead it and the sentence start is pulled back up to 0.6 s.
+        expect(ts[0]!.start).toBeGreaterThanOrEqual(0);
+        expect(ts[0]!.start).toBeLessThan(1.1);
+        expect(ts.map((t) => t.text)).toEqual(["大家好今天我们讨论一下下个季度的产品计划", "好的我先介绍一下市场度的调研结果", "请重点说明用户最关心的三个问题", "第一是价格第二是续航第三是售后服务"]);
+        for (let i = 1; i < ts.length; i++) expect(ts[i]!.start).toBeGreaterThanOrEqual(ts[i - 1]!.end);
     }, 300_000);
 
     it("transcribe with qwen3-asr-0.6b = sherpa-onnx's text (with punctuation)", async () => {
