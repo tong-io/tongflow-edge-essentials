@@ -273,7 +273,7 @@ license next to its weights.
 
 Measured on Apple Silicon (headless Chromium 159, `--enable-unsafe-webgpu --use-angle=metal`,
 Metal adapter with `shader-f16`, model served locally), LFM2.5-350M q4f16, `gen-text` on a
-≈200-character Chinese contract clause: first run 6–7 s (≈3.5 s of it loading 255 MB into the
+≈200-character Chinese contract clause: first run 6–11 s (3.5–8 s of it loading 255 MB into the
 Cache API and creating the session), ≈100 tokens of JSON at ≈45 tokens/s; the model resident:
 2.3 s, first token after 0.24 s; a fresh worker with the model in the Cache API: 2.5 s; cancel
 lands within one token.
@@ -615,7 +615,7 @@ transformers.js **4.3.2** + onnxruntime-web **1.31.1**(所有 ML 节点共用这
 由测试与 `src/ml/catalog.ts` 保持一致)。部分权重文件超过 100 MB(Qwen3.5 decoder 数据 437 MB),模型服务器若有单文件上限需对这些仓库放开。
 
 实测(Apple Silicon,无头 Chromium 159 加 `--enable-unsafe-webgpu --use-angle=metal`,Metal adapter 支持 `shader-f16`,模型本地提供):
-LFM2.5-350M q4f16 对约 200 字的中文合同条款做 `gen-text`,首次 6–7 s(其中约 3.5 s 为把 255 MB 写入 Cache API 并创建 session),
+LFM2.5-350M q4f16 对约 200 字的中文合同条款做 `gen-text`,首次 6–11 s(其中 3.5–8 s 为把 255 MB 写入 Cache API 并创建 session),
 约 100 个 token、约 45 token/s;模型常驻时 2.3 s,首个 token 0.24 s;新 worker 从 Cache API 加载 2.5 s;取消在一个 token 内生效。
 
 **备选实现**:scanner 规定每个 `nodeSlot` 只能有一条 manifest 记录(重复会被拒:`declared more than once`),所以备选实现是该 slot

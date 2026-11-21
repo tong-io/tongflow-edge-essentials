@@ -30,7 +30,7 @@ vi.mock("@huggingface/transformers", () => {
 import type { EdgeContext } from "../../src/context.js";
 import { LFM25_350M, QWEN35_VL, GLM_OCR, EMBEDDING_GEMMA_2 } from "../../src/ml/catalog.js";
 import { generateText } from "../../src/ml/generate.js";
-import { CACHE_KEY, MAX_RESIDENT, ORT_WASM, disposeAll, loadRuntime, withModel } from "../../src/ml/runtime.js";
+import { MAX_RESIDENT, disposeAll, loadRuntime, withModel } from "../../src/ml/runtime.js";
 import { WEBGPU_MISSING } from "../../src/ml/webgpu.js";
 import { impls, methods } from "../../src/index.js";
 
@@ -53,21 +53,24 @@ afterEach(async () => {
     await disposeAll();
 });
 
-describe("transformers.js configuration", () => {
-    it("fetches only from the model base and the plugin's own ORT wasm, caching in the Cache API", async () => {
-        const tf = await loadRuntime(ctx());
-        expect(tf.env.allowLocalModels).toBe(false);
-        expect(tf.env.allowRemoteModels).toBe(true);
-        expect(tf.env.remoteHost).toBe("https://scan.example.com/models/");
-        expect(tf.env.remotePathTemplate).toBe("{model}/");
-        expect(tf.env.cacheKey).toBe(CACHE_KEY);
-        expect(tf.env.backends.onnx.wasm!.wasmPaths).toEqual({
-            mjs: `https://scan.example.com/plugins/edge/dist/assets/ort/${ORT_WASM.mjs}`,
-            wasm: `https://scan.example.com/plugins/edge/dist/assets/ort/${ORT_WASM.wasm}`,
-        });
-        // imported once, however many calls
-        await loadRuntime(ctx());
-        expect(fake.imports).toBe(1);
+describe("transformers.js configuration (shared ml/transformers.ts)", () => {
+    it("fetches only from the model base and the plugin's own ORT wasm", async () => {
+        const realFetch = globalThis.fetch;
+        // the shared loader fetches the ort wasm once (no Cache API in Node)
+        globalThis.fetch = (async () => new Response(new Uint8Array([0, 97, 115, 109]))) as typeof fetch;
+        try {
+            const tf = await loadRuntime(ctx());
+            expect(tf.env.allowLocalModels).toBe(false);
+            expect(tf.env.allowRemoteModels).toBe(true);
+            expect(tf.env.remoteHost).toBe("https://scan.example.com/models/");
+            expect(tf.env.remotePathTemplate).toBe("{model}/");
+            expect(tf.env.backends.onnx.wasm!.wasmPaths).toBe("https://scan.example.com/plugins/edge/dist/assets/ort/");
+            expect(typeof tf.env.fetch).toBe("function");
+            await loadRuntime(ctx());
+            expect(fake.imports).toBe(1);
+        } finally {
+            globalThis.fetch = realFetch;
+        }
     });
 });
 

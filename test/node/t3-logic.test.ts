@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { T3_MODELS, hostedFiles, onnxFiles, pickModel, variantFor, GLM_OCR, LFM25_350M, QWEN35_VL } from "../../src/ml/catalog.js";
-import { configureFromEntryUrl, isConfigMessage, repoUrl, resolveModelBase, setEdgeConfig } from "../../src/ml/config.js";
+import { repoUrl } from "../../src/ml/runtime.js";
 import {
     DESCRIBE_PROMPT_ZH,
     KEY_POINTS_SCHEMA,
@@ -35,35 +35,7 @@ import { truncateTokens } from "../../src/slots/gen-text.js";
 
 const root = new URL("../../", import.meta.url);
 
-describe("model base", () => {
-    afterEach(() => {
-        globalThis.__TONGFLOW_EDGE_CONFIG__ = undefined;
-    });
-
-    it("defaults to the same-origin /models/", () => {
-        expect(resolveModelBase(undefined, "https://scan.example.com/plugins/x/dist/index.js")).toBe("https://scan.example.com/models/");
-    });
-
-    it("ctx.modelBase wins over the host config, which wins over the default", () => {
-        setEdgeConfig({ modelBase: "https://oss.example.com/m" });
-        expect(resolveModelBase(undefined, "https://scan.example.com/")).toBe("https://oss.example.com/m/");
-        expect(resolveModelBase("/weights/", "https://scan.example.com/a/b")).toBe("https://scan.example.com/weights/");
-    });
-
-    it("reads ?modelBase= from the entry URL, without overriding a host-set base", () => {
-        configureFromEntryUrl("https://scan.example.com/p/dist/index.js?modelBase=https%3A%2F%2Fcdn.example.com%2Fmodels%2F");
-        expect(globalThis.__TONGFLOW_EDGE_CONFIG__?.modelBase).toBe("https://cdn.example.com/models/");
-        configureFromEntryUrl("https://scan.example.com/p/dist/index.js?modelBase=/other/");
-        expect(globalThis.__TONGFLOW_EDGE_CONFIG__?.modelBase).toBe("https://cdn.example.com/models/");
-        configureFromEntryUrl("not a url");
-    });
-
-    it("recognizes the host config message", () => {
-        expect(isConfigMessage({ type: "tongflow-edge-config", modelBase: "/m/" })).toBe(true);
-        expect(isConfigMessage({ type: "invoke" })).toBe(false);
-        expect(isConfigMessage(null)).toBe(false);
-    });
-
+describe("model repo layout", () => {
     it("lays repos out as <base><org>/<repo>/", () => {
         expect(repoUrl("https://x/models/", "onnx-community/GLM-OCR-ONNX")).toBe("https://x/models/onnx-community/GLM-OCR-ONNX/");
     });
