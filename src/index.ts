@@ -1,8 +1,9 @@
 /**
  * tongflow-edge-essentials: browser edge nodes (T0 zero-model nodes, knowledge-base nodes,
  * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, EmbeddingGemma 2, LFM2.5-350M; and the T2 audio nodes:
- * SenseVoiceSmall or X-ASR zh-en, Silero VAD, pyannote + CAM++, CED-tiny; and the media nodes on
- * Mediabunny + WebCodecs with ffmpeg.wasm as fallback / selectable implementation).
+ * SenseVoiceSmall or X-ASR zh-en, Silero VAD, pyannote + CAM++, CED-tiny, with the alternatives Whisper large-v3-turbo,
+ * Cohere Transcribe, Qwen3-ASR-0.6B, Zipformer-CTC and Nemotron-3-Diarization picked by the node's model;
+ * and the media nodes on Mediabunny + WebCodecs with ffmpeg.wasm as fallback / selectable implementation).
  *
  * The default export is `defineEdgePlugin({ methods })`: loaded in a dedicated Web
  * Worker it answers the engine's worker protocol; imported anywhere else (the
