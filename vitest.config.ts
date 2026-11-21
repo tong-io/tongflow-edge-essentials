@@ -72,6 +72,13 @@ function serveModels() {
     };
 }
 
+/**
+ * Headless Chromium exposes a real GPU adapter only with these flags (on macOS:
+ * Metal through ANGLE). Used for the real-model tests, or with EDGE_WEBGPU=1.
+ */
+const WEBGPU = !!modelsDir || process.env.EDGE_WEBGPU === "1";
+const WEBGPU_ARGS = ["--enable-unsafe-webgpu", "--enable-features=Vulkan", ...(process.platform === "darwin" ? ["--use-angle=metal"] : [])];
+
 /** The host-side knowledge base (`@scanall/kb`), for the end-to-end ingest test; optional. */
 const scanallKb = process.env.SCANALL_KB_DIR ?? r("../../../ctsource/scanall/packages/kb");
 
@@ -114,6 +121,7 @@ export default defineConfig({
                 plugins: [serveModels()],
                 define: {
                     __EDGE_MODELS__: JSON.stringify(modelsDir),
+                    __EDGE_WEBGPU__: JSON.stringify(WEBGPU),
                     __SCANALL_KB__: JSON.stringify(existsSync(`${scanallKb}/src/index.ts`) ? `/@fs${scanallKb}/src/index.ts` : ""),
                 },
                 test: {
@@ -123,7 +131,7 @@ export default defineConfig({
                     browser: {
                         enabled: true,
                         headless: true,
-                        provider: playwright(),
+                        provider: playwright(WEBGPU ? { launchOptions: { args: WEBGPU_ARGS } } : {}),
                         instances: [{ browser: "chromium" }],
                     },
                 },
