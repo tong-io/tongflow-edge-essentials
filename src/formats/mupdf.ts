@@ -44,6 +44,49 @@ export function loadMupdf(ctx: Pick<EdgeContext, "resolveAsset" | "signal" | "on
 }
 
 type MuDocument = InstanceType<MuPdf["Document"]>;
+type MuPixmap = InstanceType<MuPdf["Pixmap"]>;
+
+/** RGBA (straight alpha) of a gray / gray+alpha / RGB / RGBA pixmap's samples (MuPDF premultiplies alpha). */
+export function pixmapRgba(px: ArrayLike<number>, width: number, height: number, stride: number, n: number, alpha: boolean): Uint8ClampedArray {
+    const out = new Uint8ClampedArray(width * height * 4);
+    const colors = alpha ? n - 1 : n;
+    for (let y = 0; y < height; y++) {
+        let i = y * stride;
+        let o = y * width * 4;
+        for (let x = 0; x < width; x++, i += n, o += 4) {
+            const a = alpha ? px[i + n - 1]! : 255;
+            const k = a && a < 255 ? 255 / a : 1;
+            if (colors >= 3) {
+                out[o] = px[i]! * k;
+                out[o + 1] = px[i + 1]! * k;
+                out[o + 2] = px[i + 2]! * k;
+            } else {
+                out[o] = out[o + 1] = out[o + 2] = px[i]! * k;
+            }
+            out[o + 3] = a;
+        }
+    }
+    return out;
+}
+
+/**
+ * PNG of a pixmap. In a browser the samples go through an OffscreenCanvas and the browser's
+ * own PNG encoder: for page-size images that is several times faster than MuPDF's encoder in
+ * single-threaded wasm (a 1653×2339 scan: 2 s → a few hundred ms). Elsewhere (Node) MuPDF's.
+ */
+async function toPng(pix: MuPixmap): Promise<Uint8Array> {
+    if (typeof OffscreenCanvas === "undefined" || typeof ImageData === "undefined") return pix.asPNG();
+    const width = pix.getWidth();
+    const height = pix.getHeight();
+    const rgba = pixmapRgba(pix.getPixels(), width, height, pix.getStride(), pix.getNumberOfComponents(), !!pix.getAlpha());
+    const canvas = new OffscreenCanvas(width, height);
+    const g = canvas.getContext("2d");
+    if (!g) return pix.asPNG();
+    g.putImageData(new ImageData(rgba as Uint8ClampedArray<ArrayBuffer>, width, height), 0, 0);
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    canvas.width = canvas.height = 0;
+    return new Uint8Array(await blob.arrayBuffer());
+}
 
 async function open(bytes: Uint8Array, ctx: EdgeContext): Promise<{ mupdf: MuPdf; doc: MuDocument }> {
     const mupdf = await loadMupdf(ctx);
@@ -93,31 +136,41 @@ export async function parsePdfMupdf(bytes: Uint8Array, ctx: EdgeContext, opts: {
             try {
                 pages.push(JSON.parse(st.asJSON()) as StextPage);
                 if (wantImages) {
+                    // The walker is synchronous: take the pixmaps now, encode them after.
+                    const found: { index: number; pix: MuPixmap }[] = [];
                     st.walk({
                         onImageBlock(_bbox, _transform, image) {
                             const index = imageIndex++;
-                            if (images.length >= MAX_IMAGES || imageBytes >= MAX_IMAGE_BYTES) return;
+                            if (images.length + found.length >= MAX_IMAGES) return;
                             if (image.getWidth() < MIN_IMAGE_SIDE || image.getHeight() < MIN_IMAGE_SIDE) return;
-                            let pix = image.toPixmap();
                             try {
+                                let pix = image.toPixmap();
                                 const cs = pix.getColorSpace();
                                 if (cs && !cs.isRGB() && !cs.isGray()) {
                                     const rgb = pix.convertToColorSpace(mupdf.ColorSpace.DeviceRGB);
                                     pix.destroy();
                                     pix = rgb;
                                 }
-                                const png = pix.asPNG();
-                                imageBytes += png.byteLength;
-                                const filename = `${stem}-p${i + 1}-img${images.length + 1}.png`;
-                                names.set(index, filename);
-                                images.push({ bytesBase64: encodeBase64(png), mime: "image/png", filename });
+                                found.push({ index, pix });
                             } catch {
-                                // an image MuPDF cannot convert is left out; the text is what matters
-                            } finally {
-                                pix.destroy();
+                                // an image MuPDF cannot decode is left out; the text is what matters
                             }
                         },
                     });
+                    for (const { index, pix } of found) {
+                        try {
+                            if (imageBytes >= MAX_IMAGE_BYTES) continue;
+                            const png = await toPng(pix);
+                            imageBytes += png.byteLength;
+                            const filename = `${stem}-p${i + 1}-img${images.length + 1}.png`;
+                            names.set(index, filename);
+                            images.push({ bytesBase64: encodeBase64(png), mime: "image/png", filename });
+                        } catch {
+                            // left out, as above
+                        } finally {
+                            pix.destroy();
+                        }
+                    }
                 }
             } finally {
                 st.destroy();
@@ -150,7 +203,7 @@ export async function renderPagesMupdf(bytes: Uint8Array, ctx: EdgeContext, opts
                 const pix = page.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceRGB, false, true);
                 try {
                     out.push({
-                        bytesBase64: encodeBase64(pix.asPNG()),
+                        bytesBase64: encodeBase64(await toPng(pix)),
                         mime: "image/png",
                         filename: `${stem}-p${String(i + 1).padStart(String(n).length, "0")}.png`,
                     });

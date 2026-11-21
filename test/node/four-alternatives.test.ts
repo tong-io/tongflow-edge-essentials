@@ -11,6 +11,7 @@ import { ctcGreedy, ctcGreedyFrames, senseVoiceText } from "../../src/audio/sens
 import { endsSentence, MAX_TOKEN_GAP_S, type RecognizedChunk, sentenceTimestamps } from "../../src/audio/timestamps.js";
 import { greedySearch, removeSpaceBetweenCjk, sherpaText, tidyTranscript, TRANSDUCER_FBANK, xAsrText } from "../../src/audio/transducer.js";
 import { SPEAKER_FBANK } from "../../src/audio/fbank.js";
+import { pixmapRgba } from "../../src/formats/mupdf.js";
 import { bodySize, joinLines, type StextPage, stextToMarkdown } from "../../src/formats/stext-markdown.js";
 import { impls } from "../../src/index.js";
 import { QWEN35_TEXT, T3_MODELS, hostedFiles, pickModel, variantFor } from "../../src/ml/catalog.js";
@@ -272,6 +273,14 @@ describe("MuPDF structured text → Markdown", () => {
         // a vector-only page: nothing to read, still a success (OCR is the host's call)
         const vector = await impls.parseDocument({ document: await fixture("no-text-layer.pdf") }, nodeCtx(undefined, { model: "mupdf" }));
         expect(vector).toMatchObject({ success: true, text: "", images: [] });
+    });
+
+    it("turns MuPDF pixmap samples (gray, RGB, premultiplied alpha, row stride) into RGBA for the browser's PNG encoder", () => {
+        // 2×1 RGB with a padded stride of 8
+        expect(Array.from(pixmapRgba([10, 20, 30, 40, 50, 60, 0, 0], 2, 1, 8, 3, false))).toEqual([10, 20, 30, 255, 40, 50, 60, 255]);
+        // gray + premultiplied alpha: 50 at alpha 128 is ≈100 straight
+        expect(Array.from(pixmapRgba([50, 128, 0, 0], 2, 1, 4, 2, true))).toEqual([100, 100, 100, 128, 0, 0, 0, 0]);
+        expect(Array.from(pixmapRgba([7], 1, 1, 1, 1, false))).toEqual([7, 7, 7, 255]);
     });
 
     it("render-pages (model mupdf) runs in Node at the pdf.js path's DPI", async () => {
