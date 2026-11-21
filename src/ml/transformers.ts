@@ -10,6 +10,7 @@
  * The library is a lazy dynamic import: nothing here costs anything until an ML node runs.
  */
 import { EdgeError } from "../util/errors.js";
+import { verifiedFetch } from "./verified-fetch.js";
 
 type Transformers = typeof import("@huggingface/transformers");
 
@@ -31,6 +32,7 @@ export interface MlRuntime {
 let tfPromise: Promise<Transformers> | undefined;
 let wasmPromise: Promise<void> | undefined;
 let configuredOrtBase: string | undefined;
+let fetchHooked = false;
 
 async function openCache(): Promise<Cache | undefined> {
     try {
@@ -118,6 +120,12 @@ export async function loadTransformers(rt: MlRuntime): Promise<Transformers> {
     env.allowRemoteModels = true;
     env.remoteHost = rt.modelBase;
     env.remotePathTemplate = "{model}/";
+    // models.json checksums are enforced on every full download (ml/verified-fetch.ts);
+    // `ml/runtime.ts` wraps it again with per-load abort signals.
+    if (!fetchHooked) {
+        fetchHooked = true;
+        env.fetch = verifiedFetch as typeof env.fetch;
+    }
     const wasm = env.backends.onnx.wasm!;
     if (configuredOrtBase !== rt.ortBase) {
         // A prefix (not {mjs, wasm}): transformers.js then leaves the wasm to us and to ort,

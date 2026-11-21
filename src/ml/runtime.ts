@@ -13,6 +13,7 @@ import { EdgeError, errorMessage } from "../util/errors.js";
 import { type ModelVariant, type T3Model, onnxFiles, withExternalData } from "./catalog.js";
 import { DownloadProgress, type TransformersProgress } from "./progress.js";
 import { ORT_ASSET_DIR, loadTransformers } from "./transformers.js";
+import { verifiedFetch } from "./verified-fetch.js";
 import { checkQuota, describeQuota, storageEstimate } from "./webgpu.js";
 
 export type Transformers = typeof import("@huggingface/transformers");
@@ -43,13 +44,13 @@ interface Resident {
 const loading = new Map<string, Loading>();
 const resident = new Map<string, Resident>();
 
-/** env.fetch: a model's files are fetched with that load's abort signal. */
+/** env.fetch: a model's files are fetched with that load's abort signal (and models.json checksums checked). */
 function modelFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     for (const l of loading.values()) {
-        if (url.startsWith(l.prefix)) return fetch(input, { ...init, signal: l.controller.signal });
+        if (url.startsWith(l.prefix)) return verifiedFetch(input, { ...init, signal: l.controller.signal });
     }
-    return fetch(input, init);
+    return verifiedFetch(input, init);
 }
 
 /** `<base><org>/<repo>/` for a repo id such as `onnx-community/GLM-OCR-ONNX`. */
