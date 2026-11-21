@@ -1,0 +1,2 @@
+function e(e){return e==null?``:String(e).replace(/\r\n?|\n/g,`<br>`).replace(/\|/g,`\\|`).trim()}function t(t){let n=t.map(t=>t.map(e));for(;n.length&&n[n.length-1].every(e=>e===``);)n.pop();if(!n.length)return``;let r=0;for(let e of n){let t=e.length;for(;t>0&&e[t-1]===``;)t--;r=Math.max(r,t)}if(r===0)return``;let i=n.map(e=>{let t=e.slice(0,r);for(;t.length<r;)t.push(``);return t}),a=e=>`| ${e.join(` | `)} |`,[o,...s]=i;return[a(o),a(Array(r).fill(`---`)),...s.map(a)].join(`
+`)}export{t};
