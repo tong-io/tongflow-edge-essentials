@@ -18,8 +18,8 @@ understanding, GLM-OCR, image embeddings and key-point extraction with 250–850
 
 | Slot | Method | What it does | Library |
 |---|---|---|---|
-| `parse-document` | `parseDocument` | Any supported document → Markdown-flavoured `text`. `images` is always `[]` for now. Alternatives: `pdfium`, `pdf2md`, `officeparser`, `readability` ([below](#alternative-implementations-vision-and-documents)) | see below |
-| `render-pages` | `renderPages` | PDF → one PNG per page (`pages`, `x-expand-each`), 150 DPI, longest side capped at 4096 px. Browser only (OffscreenCanvas). | pdf.js 6.5.438 |
+| `parse-document` | `parseDocument` | Any supported document → Markdown-flavoured `text`. `images` is `[]`, except for a PDF parsed with model `mupdf` (its embedded images as PNG). Alternatives: `pdfium`, `pdf2md`, `officeparser`, `readability`, `mupdf` ([below](#alternative-implementations-vision-and-documents)) | see below |
+| `render-pages` | `renderPages` | PDF → one PNG per page (`pages`, `x-expand-each`), 150 DPI, longest side capped at 4096 px. Default pdf.js, browser only (OffscreenCanvas); model `mupdf` renders with MuPDF.js (no canvas needed). | pdf.js 6.5.438 / MuPDF.js 1.28.6 |
 | `extract-audio` | `extractAudio` | The primary audio track of a video, **remuxed without re-encoding** when possible: AAC/AC-3 → `.m4a`, Opus/Vorbis → audio-only `.webm`, MP3 → `.mp3`, FLAC → `.flac`, PCM → `.wav`; anything else is transcoded to AAC with WebCodecs (MP3 when ffmpeg.wasm does it). | Mediabunny 1.66.2; ffmpeg.wasm fallback, see [Media nodes and ffmpeg.wasm](#media-nodes-and-ffmpegwasm) |
 | `get-first-frame` | `getFirstFrame` | First decodable video frame as PNG (rotation applied). WebCodecs; ffmpeg.wasm for codecs the browser does not decode. | same |
 | `get-last-frame` | `getLastFrame` | Last frame (presentation order) as PNG, `<stem>-last.png`. | same |
@@ -30,7 +30,8 @@ understanding, GLM-OCR, image embeddings and key-point extraction with 250–850
 | `chunk-text` | `chunkText` | Texts → chunks for the knowledge base (see [Knowledge base](#knowledge-base-chunk-text-embed-text-kb-write)) | own code |
 | `embed-text` | `embedText` | Texts → TFV1 vectors, bge-small-zh-v1.5 (default) or bge-base-zh-v1.5 | transformers.js 4.3.2, onnxruntime-web 1.31.1 |
 | `kb-write` | `kbWrite` | Validates chunks + vectors and summarizes them; the host stores them | own code |
-| `transcribe` | `transcribe` | Audio → Chinese-first `text` with punctuation (SenseVoiceSmall) | onnxruntime-web 1.31.1, see [T2 audio nodes](#t2-audio-nodes) |
+| `transcribe` | `transcribe` | Audio → Chinese-first `text` with punctuation (SenseVoiceSmall; X-ASR zh-en as model `x-asr-zh-en`) | onnxruntime-web 1.31.1, see [T2 audio nodes](#t2-audio-nodes) |
+| `transcribe-timestamp` | `transcribeTimestamp` | Audio → `text` + sentence-level `time_stamps` `[{start, end, text}]` in seconds (SenseVoiceSmall; X-ASR as `x-asr-zh-en`) | same |
 | `vad-segment` | `vadSegment` | Audio → speech segments as WAV `segments` (Silero VAD) | same |
 | `diarize-speakers` | `diarizeSpeakers` | Audio → `segments` JSON `[{speaker,start,end}]` (pyannote + CAM++) | same |
 | `audio-tag` | `audioTag` | Audio → `tags` JSON `[{label,score}]` (CED-tiny, AudioSet) | same |
@@ -46,7 +47,7 @@ nameless upload still works):
 
 | Format | How | Output |
 |---|---|---|
-| PDF | pdf.js text layer, page by page, with CJK CMaps | Text per page. A PDF without a text layer returns **success with empty text**; deciding to OCR it is the host's call. Look-alike CJK radicals that some fonts emit (⼆, ⻓) are folded back to the ideographs. |
+| PDF | pdf.js text layer, page by page, with CJK CMaps (default, model `pdfjs`); or MuPDF.js structured text (model `mupdf`, [below](#mupdfjs-model-mupdf)) | Text per page. A PDF without a text layer returns **success with empty text**; deciding to OCR it is the host's call. Look-alike CJK radicals that some fonts emit (⼆, ⻓) are folded back to the ideographs. With `mupdf`: Markdown headings, joined paragraphs, list items and tables, plus the embedded images. |
 | .docx/.docm/.dotx | mammoth → HTML → Markdown (defuddle's converter, turndown) | Headings, lists, tables |
 | .xlsx/.xlsm/.xlsb/.xls/.ods | SheetJS CE 0.20.3 (with code pages for legacy .xls) | `## <sheet>` + a Markdown table per sheet |
 | .csv/.tsv | PapaParse 5.7.1; UTF-8, UTF-16 or GBK/GB18030 | One Markdown table |
@@ -203,6 +204,40 @@ A long document is dominated by embedding (≈4–20 minutes per 1000 default-si
 `max_chars` is faster per character (attention grows with length). bge-base-zh-v1.5 is ≈4× the
 compute of bge-small.
 
+#### MuPDF.js (model `mupdf`)
+
+`parse-document` takes `mupdf` as one more alternative in its list (`builtin` stays the default; MuPDF
+reads PDFs only, other formats go to the built-in parser) and `render-pages` takes
+`"models": ["pdfjs", "mupdf"]` (`pdfjs` stays the default). The `mupdf` npm package 1.28.6 (Artifex,
+**AGPL-3.0-or-later**, fine here because this plugin is AGPL-3.0 and open source) is a lazy chunk
+(24 kB gzip of JS); its wasm (10.4 MB, 4.7 MB gzip) is **bundled** in `dist/assets/mupdf/` like the
+other wasm assets, fetched from the plugin's own origin with download progress on first use and handed
+to MuPDF as `wasmBinary`. It runs in the DOM-less worker and in Node.
+
+- `parse-document`: MuPDF's structured text (reading order, `dehyphenate`) becomes Markdown: lines set
+  ≥ 15 % larger than the body size become `#` / `##` / `###` (largest first; a short bold line at body
+  size is the next level), lines of one paragraph are joined (no space between CJK, one between Latin
+  words) while the baseline step stays at the page's usual line spacing and the line before ran to the
+  right edge, list markers start new paragraphs, and rows of side-by-side cells become a Markdown table.
+  Embedded images (≥ 48 px, at most 64 or 64 MB per document) come back in `images` as
+  `<stem>-p<page>-img<n>.png` and are referenced in the text as `![](…)` where they sit; `_params.images:
+  false` skips them. A scanned PDF therefore returns empty text **and its page scans as images**.
+- `render-pages`: MuPDF's rasterizer at the pdf.js path's rules (150 DPI, longest side ≤ 4096 px), same
+  file names; no OffscreenCanvas needed.
+
+Measured on the scanall demo samples (headless Chromium, Apple Silicon, warm = second call):
+
+| | pdf.js (default) | MuPDF.js |
+|---|---|---|
+| `产品白皮书.pdf` (3 text pages) parse | 443 ms first call / 24 ms warm | 262 ms first call (wasm included) / 12 ms warm |
+| same, render-pages | 171–198 ms | 147–167 ms |
+| `采购合同-扫描件.pdf` (2 scanned pages) render-pages | 267–277 ms | 455–489 ms (parse-document with both page scans as `images`: 510 ms) |
+
+Text quality on the white paper: pdf.js returns the text layer line by line (every wrapped line breaks
+the sentence, the version table is space-separated text); MuPDF returns `#` title, `##` section
+headings, whole paragraphs, the numbered list items and the version table as a Markdown table. On the
+scan both return empty text; MuPDF also returns the two page scans as `images`.
+
 ### Model manifest
 
 `models.json` (repo root, also exported as `tongflow-edge-essentials/models.json`) lists every model
@@ -214,7 +249,9 @@ it also carries `licenseFiles` and `corresponding_source` (GPL). The audio
 entries also carry `checksums` (`{path: {size, sha256}}`, checked by the plugin before caching),
 `licenseUrl`, `slots` and `upstream` (the GitHub release asset each mirror was verified against).
 The T1 vision entries use the same format (`upstream` describes how each community conversion was
-checked); their table is in [T1 vision/document nodes](#t1-visiondocument-nodes).
+checked); their table is in [T1 vision/document nodes](#t1-visiondocument-nodes). `qwen3.5-0.8b-text` also
+carries `checksums`: T3 files with a checksum are verified (size + SHA-256, while transformers.js streams
+them) before they are cached.
 
 | id | Source | Files | Size | License |
 |---|---|---|---|---|
@@ -384,7 +421,7 @@ storage quota.
 | `image-describe` | `imageGenText` (same method) | `qwen3.5-0.8b` (same alternatives) | `image` + optional `text` / `userPrompt`; same behaviour. |
 | `ocr-image` (alternative) | `ocrImageGlm` | `glm-ocr` | GLM-OCR page reading, Markdown out (tables included). Not the slot default: see [Alternative implementations](#alternative-implementations). |
 | `embed-image` | `embedImage` | `embeddinggemma-2` (alternative `chinese-clip-base`, 512 dims, WASM) | One L2-normalized 768-d vector per image, as a `vectors` file in the TFV1 format (below). Same space as EmbeddingGemma 2 text embeddings (query prefix `task: search result \| query: `). The audio encoder is never loaded. |
-| `gen-text` | `genText` | `lfm2.5-350m` | Structured key-point extraction from `text`; `userPrompt` narrows it. The decoder is constrained to the JSON schema `{"key_points": string[]}` (transformers.js structured output) and `text` is that JSON. The instruction follows the document's language (a Chinese document gets a Chinese prompt and Chinese key points). |
+| `gen-text` | `genText` | `lfm2.5-350m`, `qwen3.5-0.8b-text` | Structured key-point extraction from `text`; `userPrompt` narrows it. The decoder is constrained to the JSON schema `{"key_points": string[]}` (transformers.js structured output) and `text` is that JSON. The instruction follows the document's language (a Chinese document gets a Chinese prompt and Chinese key points). Qwen3.5 text: see below. |
 
 Advanced params (`_params`): `max_new_tokens` everywhere; `max_pixels` for the vision models
 (Qwen3.5 default 448², GLM-OCR 1024²: the image is resized to that pixel budget, keeping the
@@ -429,6 +466,7 @@ it on photos and video frames, and OCR for documents.
 | `glm-ocr` | `onnx-community/GLM-OCR-ONNX` | 660 / 745 MB | MIT |
 | `embeddinggemma-2` | `onnx-community/embeddinggemma-2-ONNX` (text + vision only) | 290 / 316 MB | Apache-2.0; deployments must follow the [Gemma Prohibited Use Policy](https://gemma.ai/resources/prohibited-use/) |
 | `lfm2.5-350m` | `LiquidAI/LFM2.5-350M-ONNX` | 259 / 297 MB | **LFM Open License v1.0** (below) |
+| `qwen3.5-0.8b-text` | `onnx-community/Qwen3.5-0.8B-Text-ONNX` (text decoder only) | 490 / 571 MB | Apache-2.0 |
 
 **Runtime.** The shared transformers.js 4.3.2 / onnxruntime-web 1.31.1 runtime of `embed-text`
 (`src/ml/transformers.ts`, same model base, same `dist/assets/ort/` wasm, same Cache API), with the
@@ -450,6 +488,39 @@ base + session creation + inference): `image-gen-text` Qwen3.5-0.8B describing a
 128 new tokens, 19.6 s; `ocr-image` GLM-OCR q4f16 reading a two-line invoice image exactly, 4.1 s;
 `embed-image` EmbeddingGemma 2 q4f16, 2.8 s.
 
+#### `gen-text` with Qwen3.5-0.8B text (`qwen3.5-0.8b-text`)
+
+**`gen-text` can run entirely under Apache-2.0 by choosing `qwen3.5-0.8b-text`**, which avoids the LFM
+license's revenue threshold. The default stays `lfm2.5-350m`; the host decides. The model is
+onnx-community's text-only export of Qwen3.5-0.8B (one graph with tied embeddings, no vision tower):
+490 MB q4f16 / 571 MB q4, smaller than loading the multimodal repo's `embed_tokens` +
+`decoder_model_merged` (604 MB). Same task, schema and output `text`; the differences:
+
+- a stricter no-invention instruction (`KEY_POINTS_STRICT_SYSTEM[_ZH]`: only what the text states,
+  numbers, dates and names copied exactly, nothing inferred, no repeats);
+- repetition control on the **generated tokens only** (`src/ml/repeat.ts`, the processor of the
+  image-description fix): penalty 1.05 and no repeated 8-gram (`_params.repetition_penalty`,
+  `_params.no_repeat_ngram_size`), applied after the JSON constraint and never leaving a step without an
+  allowed token; LFM keeps none;
+- `max_new_tokens` 384 by default (LFM 768), `<|im_end|>` as end of turn (the repo's
+  `generation_config.json` names only `<|endoftext|>`), thinking off;
+- key points that only restate earlier ones are dropped (`dropRestatedPoints`).
+
+Measured (same setup as above, greedy, model resident unless noted):
+
+| Input | LFM2.5-350M | Qwen3.5-0.8B text |
+|---|---|---|
+| Contract clause (≈200 chars) | 2.2 s, 102 tokens, 10 points (first run 8.3 s) | 12.4 s, 191 tokens ≈ 15 tokens/s, 6 points (first run 24.5 s: 13.4 s until the first token, mostly loading 490 MB) |
+| Demo meeting transcript (≈800 chars) | 1.2–1.5 s, 42 tokens, 5 points | 23–35 s, 363 tokens, 12 points (first token after 0.8 s) |
+
+On the contract LFM returns fragments («三期支付», «合同总额0.1%»); Qwen returns six complete sentences
+with every amount, date and party exactly as written. On the meeting LFM returns five topic words
+(«研发进度», «扫码识别率», …); Qwen returns 12 factual points with the numbers right
+(23/19/4 defects, 99.2 % vs 99.5 %, 18000 元, 12 月 15 日 / 12 月 1 日), but runs near its token limit
+and once attributed a request to the wrong speaker. Settings that did worse: no penalty (it kept going
+after the facts and invented dates), 1.1 (it padded the list with remarks about the task), a 4-gram ban
+(it changed numbers: 3 月 31 日 → 29 日, 128 万 → 12.8 万). Qwen is 3–5× slower than LFM per answer.
+
 #### Alternative implementations
 
 The scanner accepts exactly one manifest entry per `nodeSlot` (a second entry for the same slot is
@@ -458,6 +529,10 @@ rejected: `nodeSlot … is declared more than once`), so an alternative implemen
 `{"nodeSlot": "ocr-image", "method": "ocrImage", "models": ["pp-ocrv6-small", "pp-ocrv6-tiny", "glm-ocr"]}`:
 the default method is PP-OCRv6, and `withModelAlternative(ocrImage, "glm-ocr", ocrImageGlm)` routes
 `glm-ocr` here. `ocrImageGlm` stays exported as its own method and accepts only `glm-ocr` (or no model).
+The same pattern, default first: `gen-text` `["lfm2.5-350m", "qwen3.5-0.8b-text"]`, `transcribe` and
+`transcribe-timestamp` `["sensevoice-small", "sensevoice-small+ffmpeg-wasm", "x-asr-zh-en", "x-asr-zh-en+ffmpeg-wasm"]`
+(`+ffmpeg-wasm`: the same recognizer with the audio decoded by ffmpeg.wasm), `parse-document`
+`[…, "mupdf"]` (PDF only) and `render-pages` `["pdfjs", "mupdf"]` (implementation ids, not models).
 
 #### TFV1 vector files
 
@@ -475,8 +550,8 @@ entity it controls, is controlled by or is under common control with — has ann
 USD 10 million** (the license's "Threshold", §1 and §5). Use "for direct or indirect commercial
 advantage" counts as commercial, so a free demo that promotes a company does too. Before enabling
 `gen-text` in a deployment, confirm who operates it and that its group is under the threshold;
-if it is not, leave the slot off or pick another model. Mark any modified weight files as modified
-(§4(b)). The license grants no trademark rights.
+if it is not, leave the slot off or pick `qwen3.5-0.8b-text` (Apache-2.0, no threshold). Mark any
+modified weight files as modified (§4(b)). The license grants no trademark rights.
 
 ### Alternative implementations: vision and documents
 
@@ -611,7 +686,8 @@ mono instead, and `<model>+ffmpeg-wasm` forces that; see [Media nodes and ffmpeg
 
 | Slot | Method | `models` | What it does |
 |---|---|---|---|
-| `transcribe` | `transcribe` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm` | SenseVoiceSmall (int8): Chinese first (also en/ja/ko/yue), **with punctuation and ITN**. `language` is a hint (`zh`, `zh-CN`, `en`, `yue`/Cantonese/粤语, `ja`, `ko`; anything else = auto). Up to 30 s in one pass; longer audio is cut at pauses with Silero VAD into ≤ 25 s chunks, recognized one by one (progress `transcribing i/N`) and joined (no separator between CJK pieces). The ABI output has only `text`, so the detected language is not returned. `context` and `max_new_tokens` are ignored (CTC model). |
+| `transcribe` | `transcribe` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm`, `x-asr-zh-en`, `x-asr-zh-en+ffmpeg-wasm` | SenseVoiceSmall (int8): Chinese first (also en/ja/ko/yue), **with punctuation and ITN**. `language` is a hint (`zh`, `zh-CN`, `en`, `yue`/Cantonese/粤语, `ja`, `ko`; anything else = auto). Up to 30 s in one pass; longer audio is cut at pauses with Silero VAD into ≤ 25 s chunks, recognized one by one (progress `transcribing i/N`) and joined (no separator between CJK pieces). The ABI output has only `text`, so the detected language is not returned. `context` and `max_new_tokens` are ignored (CTC model). Model `x-asr-zh-en`: X-ASR zh-en (below), Chinese and English with punctuation and casing, same chunking; `language` is not used. |
+| `transcribe-timestamp` | `transcribeTimestamp` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm`, `x-asr-zh-en`, `x-asr-zh-en+ffmpeg-wasm` | The same recognition, plus `time_stamps`: `[{"start":0.92,"end":5.832,"text":"大家好，今天我们讨论一下下个季度的产品计划。"}, …]`, seconds, one entry per sentence. Token times come from the recognizer (SenseVoice CTC frames, `(frame − 4) × 60 ms` as sherpa-onnx computes them; X-ASR transducer emissions, 40 ms frames); a sentence ends at 。！？；!?; (a `.` that is not a decimal point), at a chunk boundary or at a pause over 1.2 s between tokens. Silero VAD always runs: a sentence starts no earlier than its speech span (≤ 0.6 s before its first token) and ends where the span ends (≤ 0.8 s after its last spoken token; late-emitted punctuation does not count). Monotonic (`start ≤ end ≤ next.start`) and within the audio. Long audio: the same pause-based chunks as `transcribe`. `context` / `max_new_tokens` are ignored. |
 | `vad-segment` | `vadSegment` | `silero-vad-v5`, `silero-vad-v5+ffmpeg-wasm` | `segments`: one 16 kHz mono 16-bit WAV per speech span (`x-expand-each`), named `<stem>-001-1.09s-5.68s.wav`. Silero's own `get_speech_timestamps` logic; defaults threshold 0.5, min speech 250 ms, min silence 500 ms, pad 200 ms, max 30 s (split at the last ≥ 98 ms pause). `_params` may override `threshold`, `min_speech_ms`, `min_silence_ms`, `speech_pad_ms`, `max_speech_s`. |
 | `diarize-speakers` | `diarizeSpeakers` | `pyannote-campplus-zh`, `pyannote-campplus-zh+ffmpeg-wasm` | `segments` (JSON string): `[{"speaker":0,"start":0.976,"end":5.718}, …]`, seconds, sorted by start, speakers numbered by first appearance. pyannote segmentation-3.0 over 10 s windows (1 s step) → per-window local speakers → 3D-Speaker CAM++ (zh-cn) embedding of each → complete-linkage clustering on cosine distance (threshold 0.5) → pyannote reconstruction; segments < 0.3 s dropped, same-speaker gaps ≤ 0.5 s merged. A port of sherpa-onnx's `OfflineSpeakerDiarizationPyannoteImpl`. `_params`: `num_speakers` (exact count), `threshold`. |
 | `audio-tag` | `audioTag` | `ced-tiny`, `ced-tiny+ffmpeg-wasm` | `tags` (JSON string): `[{"label":"Speech","score":0.7072}, …]`, AudioSet's 527 classes, the top 10 with score ≥ 0.1 (at least one). Long audio is tagged in 10 s windows (CED's training length) and each class keeps its maximum. `_params`: `top_k`, `min_score`. |
@@ -646,6 +722,23 @@ model from a local server), 63 s via VAD chunks 26 s; vad-segment 0.36 s; diariz
 audio-tag 0.2 s for 1.5 s. Phones are slower (research/09 cites RTF ≈ 0.7 for SenseVoice in
 Android Chrome); cross-origin isolation lets onnxruntime-web use up to 4 threads.
 
+**X-ASR zh-en** (`x-asr-zh-en`, Apache-2.0, Gilgamesh-J/X-ASR): sherpa-onnx's offline int8 export
+(`sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03`: encoder 161 MB, decoder 11 MB,
+joiner 2.6 MB, 175 MB in all) on the same onnxruntime-web. Front end and search are ports of
+sherpa-onnx's offline transducer path (`src/audio/transducer.ts`): 80-bin fbank (povey, no snip-edges,
+samples in [-1, 1]), encoder, greedy search with at most one symbol per frame (context starts
+`[-1, blank]`, `<unk>` treated as blank), `▁` read as a space and spaces between CJK removed; the plugin
+also drops the space sherpa leaves after full-width punctuation («大家好， 今天» → «大家好，今天»). Against
+sherpa-onnx 2.0.2 (Python, same files): identical text on the 16 kHz files (dialog, hello) and on X-ASR's
+own test clips except one word on a 22.05 kHz clip (resampler difference). The encoder cannot take the
+whole 133 s demo meeting in one pass (sherpa-onnx fails too), so `transcribe`'s ≤ 25 s chunks matter.
+Measured (same browser setup): 21 s dialog 8.2 s warm (first call 32 s, including 175 MB from a local model base) (SenseVoice 8.5 s warm); 133 s demo meeting
+(`项目周会录音.m4a`) 57 s including the model load (RTF ≈ 0.43) (SenseVoice 80 s warm, RTF ≈ 0.6). On that meeting (synthesized speech, the
+script as reference, punctuation ignored, numbers removed because SenseVoice writes digits and the script
+spells them): character error rate X-ASR 6.7 %, SenseVoice 8.9 %. X-ASR keeps numbers as
+Chinese numerals («二十三个»), SenseVoice applies ITN («23个»). `transcribe-timestamp` on the meeting:
+17 sentences with SenseVoice (80 s) and 16 with X-ASR (58 s), monotonic, the first 0–4.98 s / 0–5.48 s, the last ending at 132.87 s of 133.05 s.
+
 | id | Source (ModelScope) | Files | Size | License |
 |---|---|---|---|---|
 | `sensevoice-small-int8` | `pengzhendong/sherpa-onnx-sense-voice-zh-en-ja-ko-yue` | `model.int8.onnx`, `tokens.txt` | 240 MB (one 228 MiB file) | [FunASR Model License v1.1](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE) (copy in `licenses/`) |
@@ -653,6 +746,7 @@ Android Chrome); cross-origin isolation lets onnxruntime-web use up to 4 threads
 | `pyannote-segmentation-3.0` | `pengzhendong/sherpa-onnx-pyannote-segmentation-3-0` | `model.onnx` | 6 MB | MIT |
 | `3dspeaker-campplus-zh-cn-16k` | `lihuoo/3dspeaker-recognition-models` | `3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx` | 28 MB | Apache-2.0 |
 | `ced-tiny-int8` | `k2-fsa/sherpa-onnx-ced-tiny-audio-tagging-2024-04-19` | `model.int8.onnx`, `class_labels_indices.csv` | 6.2 MB | CC-BY-4.0 |
+| `x-asr-zh-en-int8` | `mogenle/sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03` | `encoder-epoch-99-avg-1.int8.onnx`, `decoder-epoch-99-avg-1.onnx`, `joiner-epoch-99-avg-1.int8.onnx`, `tokens.txt` | 175 MB (encoder 161 MB) | [Apache-2.0](https://github.com/Gilgamesh-J/X-ASR/blob/main/LICENSE) |
 
 sherpa-onnx publishes these exports only on GitHub Releases; the ModelScope repos above are
 mirrors, checked file by file against the GitHub assets on 2026-11-21 (details in `models.json`
@@ -662,6 +756,10 @@ AveragePool attribute changed with zero padding) and gives bit-identical embeddi
 byte-identical mirror of it exists on ModelScope. `transcribe` downloads the VAD only for audio
 longer than 30 s. **The SenseVoice file is 228 MiB, over the 100 MiB cap that applies to
 assets in this repo; it is a model-base file, so the weight host must serve files that large.**
+The X-ASR mirror was checked the same way on 2026-11-22: the release archive (ModelScope copy
+`adaada88/sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8`) matches GitHub's digest
+(`5d02c36d…6a2224`), and the four files inside it are byte-identical to the mirror. Its encoder is
+161 MB, also over 100 MiB.
 
 **Attribution (about / third-party licenses page):**
 - **SenseVoiceSmall by FunASR/FunAudioLLM** — [model card](https://www.modelscope.cn/models/iic/SenseVoiceSmall),
@@ -676,6 +774,9 @@ assets in this repo; it is a model-base file, so the weight host must serve file
 - pyannote/segmentation-3.0 by Hervé Bredin and pyannote.audio contributors (MIT); 3D-Speaker CAM++
   (iic/speech_campplus_sv_zh-cn_16k-common, Alibaba Tongyi Lab, Apache-2.0); Silero VAD by Silero Team
   (MIT); ONNX exports by k2-fsa/sherpa-onnx (Apache-2.0).
+- **X-ASR zh-en** by Gilgamesh-J ([X-ASR](https://github.com/Gilgamesh-J/X-ASR)), Apache-2.0; converted
+  to ONNX and int8-quantized by k2-fsa/sherpa-onnx (modified files, Apache-2.0 §4(b)). The mirror has no
+  LICENSE file: put the Apache-2.0 text next to the weights.
 
 ### Media nodes and ffmpeg.wasm
 
@@ -779,13 +880,14 @@ so the plugin uses `veryfast` (CRF 23 either way): 66 s (≈ 21 fps). `split-vid
 
 ### Bundle
 
-Every library is a lazy dynamic import, so the entry is 12 kB and each format loads only what it
-needs. Gzip transfer on first use, chunks included:
+Every library is a lazy dynamic import, so the entry is 16 kB (6.0 kB gzip) and each format loads only
+what it needs. Gzip transfer on first use, chunks included:
 
 | First use of | Loads (gzip) |
 |---|---|
-| any slot | `index.js` 5.3 kB |
+| any slot | `index.js` 6.0 kB |
 | PDF text / render | pdf.js + its in-thread worker ≈ 495 kB (+ CMaps on demand, ≤ 1.6 MB raw total) |
+| PDF with model `mupdf` | MuPDF.js 24 kB + glue 3.2 kB, wasm 4.7 MB gzip (10.4 MB raw, `dist/assets/mupdf/`) |
 | .docx | mammoth, xmldom, defuddle, linkedom ≈ 496 kB |
 | .xlsx/.xls/.ods | SheetJS + code pages ≈ 326 kB |
 | .csv | PapaParse ≈ 9 kB |
@@ -801,13 +903,13 @@ needs. Gzip transfer on first use, chunks included:
 | embed-text (and `embedQuery`) | transformers.js 123 kB + onnxruntime-web 42 kB + glue 3 kB, ort wasm 7.1 MB (28.7 MB raw), + the model (24 MB, or 103 MB for bge-base) |
 | `dist/kb-host.js` / `dist/embed-query.js` (host entries) | 0.6 kB / 0.65 kB |
 | any T3 node (WebGPU) | slot glue ≈ 6 kB + the same transformers.js / onnxruntime-web / ort wasm, then the model (250–850 MB) |
-| gen-text | + structured output ≈ 15 kB |
+| gen-text | + structured output ≈ 15 kB (Qwen3.5 text: + the 490 MB model instead of LFM's 259 MB) |
 | any T1 vision node | slot glue 5.3 kB (`impl`) + geometry 2.6 kB + model registry 5.5 kB + hub 1.7 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared), then the model: OCR small 31 MB / tiny 6.3 MB, orientation 6.8 MB, layout 4.9 / 23.5 MB, table 7.8 MB + OCR small |
 | split-video | + split glue 3 kB + Mediabunny 195 kB + TransNetV2 31 MB |
 | detect-objects | glue 1 kB + transformers.js 123 kB + the shared runtime + D-FINE 7.9 MB (fp16, default) / 4.5 MB (int8); alternatives: + 1.3 kB glue, YOLO26n 5.0 MB / RF-DETR nano 54.4 MB |
 | parse-document alternatives | `pdfium` 38 kB + wasm 2.1 MB gzip (4.6 MB raw); `pdf2md` 12 kB + pdf.js (shared); `officeparser` 1.9 MB (6.3 MB raw); `readability` 11 kB + linkedom (shared) |
 | image-gen-text alternatives / chinese-clip-base | glue 2.6 kB / 1.0 kB, then the model (218–368 MB / 191 MB) |
-| any T2 audio node | audio pipeline 12 kB + Mediabunny 196 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared with transformers.js), then the models: SenseVoice 240 MB, VAD 2.3 MB, diarization 34 MB, CED 6.2 MB |
+| any T2 audio node | audio pipeline 13 kB + Mediabunny 196 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared with transformers.js), then the models: SenseVoice 240 MB or X-ASR 175 MB, VAD 2.3 MB, diarization 34 MB, CED 6.2 MB |
 
 `dist/` is committed: the scanner requires the manifest's `entry` to exist, and hosts load the
 plugin straight from a clone. Rebuild it after any source change.
@@ -878,6 +980,15 @@ scanall demo samples from `../../../ctsource/scanall/demo/samples` (or `SCANALL_
 parser rows always run, the model rows need `EDGE_MODELS_DIR`. Run it on its own:
 `EDGE_MODELS_DIR=… npx vitest run --project browser --silent=false test/browser/alternatives.test.ts`.
 
+**The four alternatives** (`test/node/four-alternatives.test.ts`, no weights): transducer search and
+sherpa's text rules, SenseVoice CTC frames, sentence timestamps, the MuPDF structured-text → Markdown
+conversion and MuPDF itself in Node (parse, images, render), Qwen's prompt, repetition guard and
+restated-point filter, the streaming SHA-256, and the manifest entries. With `EDGE_MODELS_DIR`:
+`test/node/audio-models.test.ts` (X-ASR = sherpa-onnx's text; timestamps on the dialog),
+`test/browser/audio.test.ts` (X-ASR and `transcribe-timestamp` in the worker),
+`test/browser/gen-text-qwen.test.ts` (LFM and Qwen on a contract clause and the demo meeting, no
+invented numbers). `test/browser/mupdf.test.ts` needs no weights. Run browser files one at a time.
+
 **The `tongflow` dependency** is a `file:` link to a TongFlow checkout at
 `../../tongflow/packages/tongflow` (that is, `tongflow` cloned next to the directory holding this
 repo), built so that its `dist/` has the `engine` entries. The published npm `tongflow@1.0.0`
@@ -910,9 +1021,9 @@ bundled; the ABI types are type-only.
 
 ### Licenses
 
-This plugin is AGPL-3.0, like TongFlow and its official plugins. No bundled library is AGPL,
-and none is GPL-only. The ffmpeg.wasm core is GPL-2.0-or-later and is **downloaded, not bundled**
-(below).
+This plugin is AGPL-3.0, like TongFlow and its official plugins. One bundled library is AGPL:
+MuPDF.js (below). None is GPL-only. The ffmpeg.wasm core is GPL-2.0-or-later and is **downloaded,
+not bundled** (below).
 
 | Library | Version | License | Note |
 |---|---|---|---|
@@ -943,6 +1054,7 @@ and none is GPL-only. The ffmpeg.wasm core is GPL-2.0-or-later and is **download
 | @opendocsg/pdf2md | 0.4.0 | MIT | `pdf2md` only; plus unpdf 1.9.1 (MIT, without its bundled pdf.js) and enumify (MIT) |
 | officeparser | 8.9.0 | MIT | `officeparser` only, slim browser build (no Tesseract); it bundles fflate, @xmldom/xmldom, file-type, pdf.js and Node polyfills (MIT / BSD / Apache-2.0) |
 | @mozilla/readability | 0.6.0 | Apache-2.0 | `readability` only |
+| **mupdf** (MuPDF.js) | 1.28.6 | **AGPL-3.0-or-later** | Artifex Software, Inc. Only the `mupdf` implementation of `parse-document` / `render-pages` loads it. JS bundled unmodified; the wasm and its LICENSE ship in `dist/assets/mupdf/`. Source: npm `mupdf` and https://cgit.ghostscript.com/mupdf.git/. Compatible with this AGPL-3.0 plugin; a host that serves the plugin must offer its source (AGPL §13), which this public repository does. Commercial licences: artifex.com. |
 
 Model weights are not part of this package; they are downloaded from the host's model base. Their
 licenses are in the [T3 models table](#t3-webgpu-nodes) and the [T2 audio section](#t2-audio-nodes);
@@ -964,7 +1076,14 @@ tag `v12.15`, which pins FFmpeg n5.1.4 and every library); a host that mirrors t
 serve that NOTICE and the license next to it. It runs in its own worker and is never part of the
 plugin bundle.
 
-Still avoided on purpose: MuPDF.js and scribe.js (AGPL-3.0 code). The Ultralytics YOLO26n *weights*
+MuPDF.js used to be on the avoided list for its AGPL licence. Since the plugin itself is AGPL-3.0 and
+published as source, bundling AGPL-3.0-or-later code is compatible, so it is now the optional `mupdf`
+implementation (pdf.js, Apache-2.0, stays the default).
+
+Notice for the about page, models added here: "X-ASR zh-en by Gilgamesh-J (Apache-2.0), ONNX by
+k2-fsa/sherpa-onnx", "Qwen3.5-0.8B by the Qwen team, Alibaba Cloud (Apache-2.0), text-only ONNX by
+onnx-community"; library: "MuPDF © Artifex Software, Inc. (AGPL-3.0-or-later)".
+Still avoided on purpose: scribe.js (AGPL-3.0 code, not needed). The Ultralytics YOLO26n *weights*
 (AGPL-3.0) are an opt-in `detect-objects` alternative: no Ultralytics code is bundled
 (pre/post-processing is this plugin's own), and this plugin is AGPL-3.0 itself.
 Attribution for the alternatives: "YOLO26n by Ultralytics (AGPL-3.0)", "RF-DETR by Roboflow (Apache-2.0)",
@@ -997,8 +1116,8 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 
 | Slot | 方法 | 作用 | 库 |
 |---|---|---|---|
-| `parse-document` | `parseDocument` | 各类文档转成 Markdown 风格的 `text`;`images` 暂时恒为 `[]`。备选:`pdfium`、`pdf2md`、`officeparser`、`readability`(见「备选实现:视觉与文档」) | 见下表 |
-| `render-pages` | `renderPages` | PDF 每页输出一张 PNG(`pages`,`x-expand-each`)。分辨率 150 DPI,最长边不超过 4096 px。仅限浏览器(需要 OffscreenCanvas) | pdf.js 6.5.438 |
+| `parse-document` | `parseDocument` | 各类文档转成 Markdown 风格的 `text`;`images` 为 `[]`,只有用模型 `mupdf` 解析 PDF 时返回内嵌图片(PNG)。备选:`pdfium`、`pdf2md`、`officeparser`、`readability`、`mupdf`(见「备选实现:视觉与文档」) | 见下表 |
+| `render-pages` | `renderPages` | PDF 每页输出一张 PNG(`pages`,`x-expand-each`)。分辨率 150 DPI,最长边不超过 4096 px。默认 pdf.js,仅限浏览器(需要 OffscreenCanvas);模型 `mupdf` 用 MuPDF.js 渲染(不需要 canvas) | pdf.js 6.5.438 / MuPDF.js 1.28.6 |
 | `extract-audio` | `extractAudio` | 抽取视频的主音轨,能不重编码就直接转封装:AAC/AC-3 转 `.m4a`,Opus/Vorbis 转纯音频 `.webm`,MP3 转 `.mp3`,FLAC 转 `.flac`,PCM 转 `.wav`。其它编码用 WebCodecs 转成 AAC(走 ffmpeg.wasm 时转成 MP3) | Mediabunny 1.66.2;ffmpeg.wasm 兜底,见「音视频节点与 ffmpeg.wasm」 |
 | `get-first-frame` | `getFirstFrame` | 视频第一帧可解码画面,输出 PNG(已按旋转信息校正)。用 WebCodecs 解码;浏览器解不了的编码交给 ffmpeg.wasm | 同上 |
 | `get-last-frame` | `getLastFrame` | 视频最后一帧(按显示顺序),输出 PNG,文件名 `<原名>-last.png` | 同上 |
@@ -1009,7 +1128,8 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 | `chunk-text` | `chunkText` | 文本切成知识库片段(见下方「知识库节点」) | 自写 |
 | `embed-text` | `embedText` | 文本转 TFV1 向量,默认 bge-small-zh-v1.5,可换 bge-base-zh-v1.5 | transformers.js 4.3.2、onnxruntime-web 1.31.1 |
 | `kb-write` | `kbWrite` | 校验并汇总片段和向量,由宿主存储 | 自写 |
-| `transcribe` | `transcribe` | 音频转中文优先、带标点的 `text`(SenseVoiceSmall) | onnxruntime-web 1.31.1,见下方「T2 音频节点」 |
+| `transcribe` | `transcribe` | 音频转中文优先、带标点的 `text`(SenseVoiceSmall;模型 `x-asr-zh-en` 为 X-ASR zh-en) | onnxruntime-web 1.31.1,见下方「T2 音频节点」 |
+| `transcribe-timestamp` | `transcribeTimestamp` | 音频转 `text` 加句级 `time_stamps` `[{start, end, text}]`(单位秒;SenseVoiceSmall,`x-asr-zh-en` 为 X-ASR) | 同上 |
 | `vad-segment` | `vadSegment` | 音频切成语音段 WAV(`segments`,Silero VAD) | 同上 |
 | `diarize-speakers` | `diarizeSpeakers` | 音频输出说话人分段 JSON `[{speaker,start,end}]`(pyannote + CAM++) | 同上 |
 | `audio-tag` | `audioTag` | 音频输出事件标签 JSON `[{label,score}]`(CED-tiny,AudioSet) | 同上 |
@@ -1024,7 +1144,7 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 
 | 格式 | 做法 | 输出 |
 |---|---|---|
-| PDF | pdf.js 文本层,逐页抽取,带 CJK CMap | 按页输出文本。没有文本层的 PDF **返回成功、文本为空**,是否 OCR 由宿主的体检决定。部分字体会把汉字映射成部首码位(⼆、⻓),这里会还原成正常汉字 |
+| PDF | pdf.js 文本层,逐页抽取,带 CJK CMap(默认,模型 `pdfjs`);或 MuPDF.js 结构化文本(模型 `mupdf`,见下文) | 按页输出文本。没有文本层的 PDF **返回成功、文本为空**,是否 OCR 由宿主的体检决定。部分字体会把汉字映射成部首码位(⼆、⻓),这里会还原成正常汉字。用 `mupdf` 时输出 Markdown 标题、合并后的段落、列表项和表格,并返回内嵌图片 |
 | .docx/.docm/.dotx | mammoth 转 HTML,再转 Markdown(defuddle 的转换器 + turndown) | 保留标题、列表、表格 |
 | .xlsx/.xlsm/.xlsb/.xls/.ods | SheetJS CE 0.20.3(含老 .xls 的代码页) | 每个工作表一个 `## 表名` 加一张 Markdown 表格 |
 | .csv/.tsv | PapaParse 5.7.1;支持 UTF-8、UTF-16、GBK/GB18030 | 一张 Markdown 表格 |
@@ -1115,6 +1235,26 @@ transformers.js **4.3.2** + onnxruntime-web **1.31.1**(所有 ML 节点共用这
 
 完整表格见英文部分。长文档的耗时主要在向量化(每 1000 个默认大小片段约 4–20 分钟)。
 
+#### MuPDF.js(模型 `mupdf`)
+
+`parse-document` 的备选列表里多了 `mupdf`(默认仍是 `builtin`;MuPDF 只读 PDF,其它格式交给内置解析器),`render-pages` 的 `models` 为
+`["pdfjs", "mupdf"]`(默认仍是 `pdfjs`)。
+`mupdf` npm 包 1.28.6(Artifex,**AGPL-3.0-or-later**;本插件本身是 AGPL-3.0 且开源,可以使用)是懒加载 chunk(JS gzip 24 kB),
+wasm(10.4 MB,gzip 4.7 MB)和其它 wasm 一样**打包**在 `dist/assets/mupdf/`,首次使用时从插件自己的源下载(上报进度),以
+`wasmBinary` 交给 MuPDF。无 DOM 的 worker 和 Node 里都能跑。
+
+- `parse-document`:MuPDF 结构化文本(阅读顺序,`dehyphenate`)转 Markdown:字号比正文大 15% 以上的短行按字号从大到小成为
+  `#`/`##`/`###`(正文字号的短粗体行再低一级);同一段的行在基线间距保持页面常规行距、上一行排到右边界时合并(中文之间不加空格,
+  英文单词之间加一个);列表标记另起一段;并排的单元格行成为 Markdown 表格。内嵌图片(边长 ≥ 48 px,每个文档最多 64 张或 64 MB)以
+  `<文件名>-p<页>-img<n>.png` 放进 `images`,并在正文原位置写 `![](…)`;`_params.images: false` 可关闭。因此扫描件 PDF 返回空文本,
+  **另把每页扫描图作为图片返回**。
+- `render-pages`:用 MuPDF 自带光栅化,规则与 pdf.js 路径相同(150 DPI,最长边 ≤ 4096 px),文件名相同,不需要 OffscreenCanvas。
+
+在 scanall 演示样例上实测(无头 Chromium,Apple Silicon,热态 = 第二次调用):白皮书(3 页文字)解析 pdf.js 首次 443 ms / 热态 24 ms,
+MuPDF 首次 262 ms(含 wasm)/ 热态 12 ms;渲染 pdf.js 171–198 ms,MuPDF 147–167 ms;扫描合同(2 页)渲染 pdf.js 267–277 ms,MuPDF 455–489 ms(`parse-document` 连同两页扫描图一起返回为 `images`:510 ms)。
+文本质量:pdf.js 按文本层逐行输出(换行处把句子截断,版本对比表是空格分隔的文字);MuPDF 输出 `#` 标题、`##` 章节标题、完整段落、
+编号列表项,版本对比表成为 Markdown 表格。扫描件两者都返回空文本,MuPDF 另返回两页扫描图。
+
 ### 模型清单
 
 `models.json`(仓库根目录,也以 `tongflow-edge-essentials/models.json` 导出)列出插件可能下载的全部模型:
@@ -1199,7 +1339,7 @@ TransNetV2 © 2020 Tomáš Souček(MIT),ONNX 导出者 q502892879;D-FINE 由 Pet
 | `image-describe` | `imageGenText`(同一方法) | `qwen3.5-0.8b`(备选同上) | `image` 加可选 `text`/`userPrompt`,行为相同 |
 | `ocr-image`(备选实现) | `ocrImageGlm` | `glm-ocr` | GLM-OCR 整页识别,输出 Markdown(含表格)。不是该 slot 的默认实现,见下文「备选实现」 |
 | `embed-image` | `embedImage` | `embeddinggemma-2`(备选 `chinese-clip-base`,512 维,WASM) | 每张图一条 L2 归一化的 768 维向量,以 TFV1 格式的 `vectors` 文件输出;与 EmbeddingGemma 2 文本向量同一空间。不加载音频编码器 |
-| `gen-text` | `genText` | `lfm2.5-350m` | 从 `text` 做结构化要点抽取,`userPrompt` 可限定范围。解码受 JSON schema `{"key_points": string[]}` 约束(transformers.js 结构化输出),输出 `text` 即该 JSON。提示词跟随原文语言:中文原文用中文指令、出中文要点 |
+| `gen-text` | `genText` | `lfm2.5-350m`、`qwen3.5-0.8b-text` | 从 `text` 做结构化要点抽取,`userPrompt` 可限定范围。解码受 JSON schema `{"key_points": string[]}` 约束(transformers.js 结构化输出),输出 `text` 即该 JSON。提示词跟随原文语言:中文原文用中文指令、出中文要点。Qwen3.5 纯文本版见下文 |
 
 高级参数(`_params`):均支持 `max_new_tokens`;视觉模型支持 `max_pixels`(Qwen3.5 默认 448²,GLM-OCR 默认 1024²,按像素预算等比缩放,
 因为每 32×32(Qwen)/28×28(GLM)像素就是一个提示 token,prefill 决定耗时);`embed-image` 支持 `dims`(768,或 Matryoshka 的
@@ -1223,7 +1363,8 @@ TransNetV2 © 2020 Tomáš Souček(MIT),ONNX 导出者 q502892879;D-FINE 由 Pet
 - 精度:adapter 支持 `shader-f16` 时用 q4f16 权重(Qwen3.5 视觉塔用 fp16),否则用 q4。
 
 **模型**(首次下载量,有 / 无 `shader-f16`):Qwen3.5-0.8B 810/740 MB(Apache-2.0);GLM-OCR 660/745 MB(MIT);EmbeddingGemma 2
-文本+视觉 290/316 MB(Apache-2.0,另须遵守 Gemma 禁止使用政策);LFM2.5-350M 259/297 MB(**LFM Open License v1.0**)。
+文本+视觉 290/316 MB(Apache-2.0,另须遵守 Gemma 禁止使用政策);LFM2.5-350M 259/297 MB(**LFM Open License v1.0**);
+Qwen3.5-0.8B 纯文本版(`onnx-community/Qwen3.5-0.8B-Text-ONNX`)490/571 MB(Apache-2.0)。
 
 **运行时**:与 `embed-text` 共用 `src/ml/transformers.ts`(transformers.js 4.3.2 / onnxruntime-web 1.31.1、同一 model base、同一
 `dist/assets/ort/` wasm、同一 Cache API),使用 WebGPU device;结构化输出用 `@huggingface/transformers-structured-output` 4.3.2。
@@ -1236,10 +1377,27 @@ LFM2.5-350M q4f16 对约 200 字的中文合同条款做 `gen-text`,首次 6–1
 `image-gen-text` Qwen3.5-0.8B 描述一张 900×172 图片、128 个新 token 19.6 s;`ocr-image` GLM-OCR q4f16 准确读出两行发票文字 4.1 s;
 `embed-image` EmbeddingGemma 2 q4f16 2.8 s。
 
+**`gen-text` 的 Qwen3.5-0.8B 纯文本版(`qwen3.5-0.8b-text`)**:**选它,`gen-text` 就可以完全在 Apache-2.0 下运行**,避开 LFM
+许可证的收入门槛。默认仍是 `lfm2.5-350m`,由宿主决定。模型是 onnx-community 导出的 Qwen3.5-0.8B 纯文本版(单个计算图,词嵌入共享,
+不含视觉塔):q4f16 490 MB / q4 571 MB,比从多模态仓库只加载 `embed_tokens` + `decoder_model_merged`(604 MB)小。任务、schema 和
+输出 `text` 与 LFM 相同,区别是:更严格的不编造指令(`KEY_POINTS_STRICT_SYSTEM[_ZH]`:只写原文明说的内容,数字、日期、名称照抄,
+不推测、不重复);**只作用于生成 token** 的防复读(`src/ml/repeat.ts`,即图像描述修复里的处理器):惩罚 1.05、不重复 8-gram
+(`_params.repetition_penalty`、`_params.no_repeat_ngram_size`),在 JSON 约束之后执行,且不会把所有合法 token 都禁掉(LFM 不加);
+`max_new_tokens` 默认 384(LFM 为 768);以 `<|im_end|>` 结束(仓库的 `generation_config.json` 只写了 `<|endoftext|>`);关闭思考;
+丢掉只是复述前面要点的条目(`dropRestatedPoints`)。
+
+实测(同上环境,贪心,模型常驻):合同条款(约 200 字)LFM 2.2 s、102 token、10 条(首次 8.3 s),Qwen 12.4 s、191 token(约 15 token/s)、6 条(首次 24.5 s,其中 13.4 s 到第一个 token,主要是加载 490 MB);演示会议转写(约 800 字)LFM 1.2–1.5 s、42 token、5 条,
+Qwen 23–35 s、363 token、12 条(0.8 s 出第一个 token)。合同上 LFM 给的是片段(「三期支付」「合同总额0.1%」),Qwen 给六句完整的话,金额、日期、双方名称与原文一致。会议上
+LFM 只给五个主题词(「研发进度」「扫码识别率」……),Qwen 给 12 条事实要点,数字都对(缺陷 23/19/4、99.2% 对 99.5%、
+18000 元、12 月 15 日/12 月 1 日),但接近 token 上限,还有一次把请求归到了错误的人。效果更差的设置:不加惩罚(事实写完后继续生成,
+编出日期)、惩罚 1.1(用关于任务本身的话凑条数)、4-gram 禁止(改错数字:3 月 31 日 → 29 日,128 万 → 12.8 万)。Qwen 每次比 LFM 慢 3–5 倍。
+
 **备选实现**:scanner 规定每个 `nodeSlot` 只能有一条 manifest 记录(重复会被拒:`declared more than once`),所以备选实现是该 slot
 记录里多一个**模型**,方法按 `ctx.model` 分派。`ocr-image` 现在是
 `{"nodeSlot": "ocr-image", "method": "ocrImage", "models": ["pp-ocrv6-small", "pp-ocrv6-tiny", "glm-ocr"]}`:默认方法是 PP-OCRv6,
-`withModelAlternative(ocrImage, "glm-ocr", ocrImageGlm)` 把 `glm-ocr` 转到 GLM-OCR。
+`withModelAlternative(ocrImage, "glm-ocr", ocrImageGlm)` 把 `glm-ocr` 转到 GLM-OCR。同样的写法(默认在前):`gen-text`
+`["lfm2.5-350m", "qwen3.5-0.8b-text"]`,`transcribe` 和 `transcribe-timestamp` `["sensevoice-small", "sensevoice-small+ffmpeg-wasm", "x-asr-zh-en", "x-asr-zh-en+ffmpeg-wasm"]`(`+ffmpeg-wasm` 表示同一识别器、音频改由 ffmpeg.wasm 解码),
+`parse-document` `[…, "mupdf"]`(只读 PDF)和 `render-pages` `["pdfjs", "mupdf"]`(这里是实现 id 而不是模型)。
 
 **TFV1 向量文件**:`<图片名>.tfv1`,`application/octet-stream`,小端:魔数 `"TFV1"`、`u32 dims`、`u32 count`,之后是
 `count × dims` 个 float32(行优先),即 scanall `@scanall/kb` 读取的格式。
@@ -1248,7 +1406,7 @@ LFM2.5-350M q4f16 对约 200 字的中文合同条款做 `gen-text`,首次 6–1
 [`licenses/LFM-Open-License-v1.0.txt`](licenses/LFM-Open-License-v1.0.txt),再分发权重时必须随附(网页 demo 把权重发给浏览器即属再分发)。
 **只有当使用方的法律实体(连同其控制、受其控制或与其同受控制的所有关联实体)年收入低于 1000 万美元时,商业使用才在授权范围内**
 (许可证的 "Threshold",§1、§5)。"直接或间接商业利益" 都算商业使用,替公司揽客的免费 demo 也算。启用 `gen-text` 前,必须由业务方确认运营主体
-及其关联方收入低于门槛;否则不要开启该 slot,或改用其它模型。修改过的权重文件要标注已修改(§4(b));许可证不授予商标权。
+及其关联方收入低于门槛;否则不要开启该 slot,或改用 `qwen3.5-0.8b-text`(Apache-2.0,没有门槛)。修改过的权重文件要标注已修改(§4(b));许可证不授予商标权。
 
 ### 备选实现:视觉与文档
 
@@ -1319,7 +1477,8 @@ AudioContext)。超过 100 MB 的输入会被拒绝。浏览器解不开或解�
 
 | Slot | 方法 | `models` | 作用 |
 |---|---|---|---|
-| `transcribe` | `transcribe` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm` | SenseVoiceSmall(int8):中文优先(也支持英/日/韩/粤),**带标点和 ITN**。`language` 是提示(`zh`、`zh-CN`、`en`、`yue`/粤语、`ja`、`ko`,其它按自动)。30 s 以内一次识别;更长的音频先用 Silero VAD 在停顿处切成不超过 25 s 的段,逐段识别(进度 `transcribing i/N`)再拼接(中文段之间不加分隔)。ABI 输出只有 `text`,识别出的语种不返回。`context`、`max_new_tokens` 不生效(CTC 模型) |
+| `transcribe` | `transcribe` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm`, `x-asr-zh-en`, `x-asr-zh-en+ffmpeg-wasm` | SenseVoiceSmall(int8):中文优先(也支持英/日/韩/粤),**带标点和 ITN**。`language` 是提示(`zh`、`zh-CN`、`en`、`yue`/粤语、`ja`、`ko`,其它按自动)。30 s 以内一次识别;更长的音频先用 Silero VAD 在停顿处切成不超过 25 s 的段,逐段识别(进度 `transcribing i/N`)再拼接(中文段之间不加分隔)。ABI 输出只有 `text`,识别出的语种不返回。`context`、`max_new_tokens` 不生效(CTC 模型)。模型 `x-asr-zh-en`:X-ASR zh-en(见下文),中英文,带标点和大小写,分段方式相同,不使用 `language` |
+| `transcribe-timestamp` | `transcribeTimestamp` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm`, `x-asr-zh-en`, `x-asr-zh-en+ffmpeg-wasm` | 识别同上,另输出 `time_stamps`:`[{"start":0.92,"end":5.832,"text":"大家好，今天我们讨论一下下个季度的产品计划。"}, …]`,单位秒,每句一条。token 时间来自识别器(SenseVoice 的 CTC 帧,按 sherpa-onnx 的算法 `(帧 − 4) × 60 ms`;X-ASR 的 transducer 发射帧,40 ms 一帧);句子在 。！？；!?;(非小数点的 `.`)、分段边界或 token 间超过 1.2 s 的停顿处结束。总会跑 Silero VAD:句子起点不早于所在语音段(最多比首个 token 早 0.6 s),终点取语音段结束(最多比最后一个有字的 token 晚 0.8 s;迟到的标点不算)。单调(`start ≤ end ≤ 下一句 start`),且在音频时长以内。长音频与 `transcribe` 相同按停顿分段。`context`、`max_new_tokens` 不生效 |
 | `vad-segment` | `vadSegment` | `silero-vad-v5`, `silero-vad-v5+ffmpeg-wasm` | `segments`:每个语音段一个 16 kHz 单声道 16 位 WAV(`x-expand-each`),文件名形如 `<stem>-001-1.09s-5.68s.wav`。算法即 Silero 官方的 `get_speech_timestamps`;默认阈值 0.5、最短语音 250 ms、最短静音 500 ms、前后各补 200 ms、单段最长 30 s(在最后一个 ≥ 98 ms 的停顿处切开)。`_params` 可覆盖 `threshold`、`min_speech_ms`、`min_silence_ms`、`speech_pad_ms`、`max_speech_s` |
 | `diarize-speakers` | `diarizeSpeakers` | `pyannote-campplus-zh`, `pyannote-campplus-zh+ffmpeg-wasm` | `segments`(JSON 字符串):`[{"speaker":0,"start":0.976,"end":5.718}, …]`,单位秒,按开始时间排序,说话人按首次出现编号。pyannote segmentation-3.0 以 10 s 窗口、1 s 步长做局部分割 → 每个窗口内的局部说话人各取一个 3D-Speaker CAM++(中文)声纹 → 按余弦距离做全连接层次聚类(阈值 0.5)→ pyannote 的重建;短于 0.3 s 的段丢弃,同一说话人间隔 ≤ 0.5 s 的段合并。移植自 sherpa-onnx 的 `OfflineSpeakerDiarizationPyannoteImpl`。`_params`:`num_speakers`(指定人数)、`threshold` |
 | `audio-tag` | `audioTag` | `ced-tiny`, `ced-tiny+ffmpeg-wasm` | `tags`(JSON 字符串):`[{"label":"Speech","score":0.7072}, …]`,AudioSet 527 类,取分数 ≥ 0.1 的前 10 个(至少一个)。长音频按 10 s 窗口(CED 的训练长度)分别打标,每类取最大值。`_params`:`top_k`、`min_score` |
@@ -1345,12 +1504,25 @@ VAD 段边界相差 0.05 s 以内,说话人分离得到相同的轮次(起点相
 含从本地服务器加载 239 MB 模型),63 s 音频走 VAD 分段共 26 s;vad-segment 0.36 s;diarize-speakers 8.5 s;audio-tag 处理 1.5 s
 音频 0.2 s。手机会更慢(research/09 引用 Android Chrome 上 SenseVoice 的 RTF 约 0.7);跨源隔离后 onnxruntime-web 最多用 4 线程。
 
+**X-ASR zh-en**(`x-asr-zh-en`,Apache-2.0,Gilgamesh-J/X-ASR):sherpa-onnx 的离线 int8 导出
+(`sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03`:encoder 161 MB、decoder 11 MB、joiner 2.6 MB,共 175 MB),
+跑在同一个 onnxruntime-web 上。前端和搜索移植自 sherpa-onnx 的离线 transducer 路径(`src/audio/transducer.ts`):80 维 fbank(povey 窗、
+不 snip-edges、样本在 [-1, 1])、encoder、每帧最多出一个符号的贪心搜索(上下文从 `[-1, blank]` 开始,`<unk>` 当 blank)、`▁` 读作空格并去掉
+中文之间的空格;插件还去掉 sherpa 在全角标点后留下的空格(「大家好， 今天」→「大家好，今天」)。对照 sherpa-onnx 2.0.2(Python,同一批文件):
+16 kHz 文件(dialog、hello)文本完全一致,X-ASR 自带测试音频中一段 22.05 kHz 的差一个词(重采样差异)。encoder 不能一次吃下 133 s 的整段
+演示会议录音(sherpa-onnx 同样失败),所以 `transcribe` 的 ≤ 25 s 分段是必要的。实测(同上浏览器环境):21 s 对话热态 8.2 s(首次 32 s,含从本地 model base 加载 175 MB)
+(SenseVoice 热态 8.5 s);133 s 演示会议(`项目周会录音.m4a`)57 s,含模型加载(RTF 约 0.43)(SenseVoice 热态 80 s,RTF 约 0.6)。该会议(合成语音,以脚本为参考,
+忽略标点;因 SenseVoice 写阿拉伯数字而脚本写汉字,去掉数字后比较)的字错率:X-ASR 6.7 %,SenseVoice 8.9 %。X-ASR 保留汉字数字
+(「二十三个」),SenseVoice 做 ITN(「23个」)。`transcribe-timestamp` 处理该会议:SenseVoice 17 句(80 s),X-ASR 16 句(58 s),单调,第一句 0–4.98 s / 0–5.48 s,最后一句结束于 132.87 s(音频 133.05 s)。
+
 模型清单(id、来源、文件、大小、许可证)见英文部分的表格。sherpa-onnx 只在 GitHub Releases 发布这些导出,上表的 ModelScope
 仓库是镜像,2026-11-21 已逐文件对照 GitHub 资产(详情见 `models.json` 的 `upstream`):SenseVoice、pyannote、Silero(对照
 snakers4 的 v5.1.2)、CED 字节一致;CAM++ 是较早的导出,GitHub 上的当前文件已重新导出(PyTorch 2.14.1,一个 AveragePool
 属性在零填充下改了值),两者声纹输出逐位相同,ModelScope 上没有与当前 GitHub 文件字节一致的镜像。`transcribe` 只有在音频超过
 30 s 时才下载 VAD。**SenseVoice 单文件 228 MiB,超过本仓库资产的 100 MiB 上限;它属于 model base 上的文件,权重托管方要能提供
-这么大的文件。**
+这么大的文件。** X-ASR 镜像于 2026-11-22 用同样方法核对:发布压缩包(ModelScope 副本
+`adaada88/sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8`)与 GitHub 给出的摘要一致(`5d02c36d…6a2224`),包内四个文件与镜像字节一致。
+其 encoder 161 MB,同样超过 100 MiB。
 
 **署名(关于/第三方许可页面):**
 - **SenseVoiceSmall by FunASR/FunAudioLLM**,附[模型卡](https://www.modelscope.cn/models/iic/SenseVoiceSmall)和
@@ -1363,6 +1535,8 @@ snakers4 的 v5.1.2)、CED 字节一致;CAM++ 是较早的导出,GitHub 上的�
   代码是 GPL-3.0,未打包。
 - pyannote/segmentation-3.0(Hervé Bredin 及 pyannote.audio 贡献者,MIT);3D-Speaker CAM++(iic/speech_campplus_sv_zh-cn_16k-common,
   阿里通义实验室,Apache-2.0);Silero VAD(Silero Team,MIT);ONNX 导出来自 k2-fsa/sherpa-onnx(Apache-2.0)。
+- **X-ASR zh-en**,作者 Gilgamesh-J([X-ASR](https://github.com/Gilgamesh-J/X-ASR)),Apache-2.0;由 k2-fsa/sherpa-onnx 转为 ONNX 并做
+  int8 量化(属修改过的文件,Apache-2.0 §4(b))。镜像仓库没有 LICENSE 文件,托管时请把 Apache-2.0 全文放在权重旁边。
 
 ### 音视频节点与 ffmpeg.wasm
 
@@ -1429,10 +1603,10 @@ tarball 原样解开即可。两个文件都登记在 `models.json`(`id: "ffmpeg
 
 ### 包体
 
-所有库都是懒加载的动态 import:入口只有 12 kB,每种格式只加载自己需要的部分。首次使用时的 gzip 传输量(含依赖的 chunk)见上方英文表格。
+所有库都是懒加载的动态 import:入口只有 16 kB(gzip 6.0 kB),每种格式只加载自己需要的部分。首次使用时的 gzip 传输量(含依赖的 chunk)见上方英文表格。
 主要数字:
 
-- PDF 约 495 kB;
+- PDF 约 495 kB;用模型 `mupdf` 时为 MuPDF.js 24 kB + 胶水 3.2 kB,另加 wasm gzip 4.7 MB(原始 10.4 MB,在 `dist/assets/mupdf/`);
 - docx 约 496 kB;
 - 表格类约 326 kB;
 - csv 约 9 kB;
@@ -1446,7 +1620,8 @@ tarball 原样解开即可。两个文件都登记在 `models.json`(`id: "ffmpeg
 - 老格式 91 kB,另加 wasm 约 17.3 MB;
 - T1 视觉节点:glue 约 15 kB 加共享的 onnxruntime-web 42 kB 与 ort wasm,再加模型(OCR small 31 MB/tiny 6.3 MB,方向 6.8 MB,版面 4.9/23.5 MB,表格 7.8 MB);
   切镜头另加 Mediabunny 195 kB 和 TransNetV2 31 MB;目标检测另加 transformers.js 123 kB 和 D-FINE 7.9 MB(默认 fp16;int8 4.5 MB);
-- T3 节点:同一套 transformers.js / onnxruntime-web / ort wasm,再加模型本身(250–850 MB);`gen-text` 另加结构化输出约 15 kB。
+- T3 节点:同一套 transformers.js / onnxruntime-web / ort wasm,再加模型本身(250–850 MB);`gen-text` 另加结构化输出约 15 kB(选 Qwen3.5 纯文本版时模型 490 MB);
+- T2 音频节点:音频管线 13 kB + Mediabunny 196 kB + 共享的 onnxruntime-web,再加模型(SenseVoice 240 MB 或 X-ASR 175 MB,VAD 2.3 MB,说话人分离 34 MB,CED 6.2 MB)。
 
 `dist/` 会提交进仓库:scanner 要求 manifest 的 `entry` 文件存在,宿主也是克隆仓库后直接加载。改动源码后要重新构建。
 
@@ -1475,6 +1650,12 @@ Chromium 没有 GPU adapter)。真实推理只在设置本地模型目录时运�
 model base,目录挂在 `/models/`,Chromium 加 `--enable-unsafe-webgpu` 启动(macOS 另加 `--use-angle=metal`,无头模式即可拿到真 GPU;
 单独设 `EDGE_WEBGPU=1` 只加这些参数),目录里有哪个模型就跑哪个,其余跳过。
 
+**四项换实现的测试**:`test/node/four-alternatives.test.ts`(不需要权重)覆盖 transducer 搜索和 sherpa 的文本规则、SenseVoice CTC 帧、
+句级时间戳、MuPDF 结构化文本转 Markdown 以及 MuPDF 本身在 Node 下的解析/图片/渲染、Qwen 的提示词/防复读兜底/复述过滤、流式 SHA-256、
+manifest 条目。设置 `EDGE_MODELS_DIR` 时另跑:`test/node/audio-models.test.ts`(X-ASR 文本与 sherpa-onnx 一致,对话的时间戳)、
+`test/browser/audio.test.ts`(worker 里的 X-ASR 和 `transcribe-timestamp`)、`test/browser/gen-text-qwen.test.ts`(LFM 与 Qwen 处理合同条款和
+演示会议,不得编造数字)。`test/browser/mupdf.test.ts` 不需要权重。浏览器测试请逐个文件运行。
+
 **`tongflow` 依赖**是 `file:` 链接,指向 `../../tongflow/packages/tongflow`,也就是与本仓库上级目录并列克隆的 TongFlow,并且需要先构建,
 让 `dist/` 里有 engine 入口。npm 上的 `tongflow@1.0.0` 早于边缘 slot 和 `tongflow/engine/worker`,等带这些内容的版本发布后改成版本号依赖。
 打进包里的只有 `defineEdgePlugin`/`edgeMethod`(0.26 kB),ABI 类型只在编译期使用。
@@ -1495,12 +1676,15 @@ model base,目录挂在 `/models/`,Chromium 加 `--enable-unsafe-webgpu` 启动(
 
 ### 许可证
 
-本插件采用 AGPL-3.0,与 TongFlow 及其官方插件一致。打包的第三方库中没有 AGPL,也没有仅限 GPL 的库。ffmpeg.wasm core 是
+本插件采用 AGPL-3.0,与 TongFlow 及其官方插件一致。打包的第三方库中有一个 AGPL:MuPDF.js(见下);没有仅限 GPL 的库。ffmpeg.wasm core 是
 GPL-2.0-or-later,**运行时下载,不打包**(见下)。
-需要注意的有两个:
+需要注意的有:
 
 - **jszip**:MIT 或 GPL-3.0 双许可,这里按 MIT 使用;
-- **Mediabunny**:MPL-2.0,属于文件级 copyleft。插件未修改其源码,若修改则须按 MPL-2.0 公开改动的文件。
+- **Mediabunny**:MPL-2.0,属于文件级 copyleft。插件未修改其源码,若修改则须按 MPL-2.0 公开改动的文件;
+- **mupdf**(MuPDF.js)1.28.6:**AGPL-3.0-or-later**,Artifex Software, Inc.。只有 `parse-document`/`render-pages` 的 `mupdf` 实现会加载它;
+  JS 未修改直接打包,wasm 及其 LICENSE 在 `dist/assets/mupdf/`;源码见 npm `mupdf` 与 https://cgit.ghostscript.com/mupdf.git/。与本插件的
+  AGPL-3.0 兼容;对外提供插件的宿主须提供源码(AGPL §13),本公开仓库即满足。商业许可见 artifex.com。
 
 T3 运行时新增:transformers.js 4.3.2(Apache-2.0)、transformers-structured-output 4.3.2(Apache-2.0)、onnxruntime-web 1.31.1(MIT,
 声明见 `licenses/onnxruntime-web-MIT.txt`)。模型权重不在本包内,由宿主的 model base 提供;LFM2.5-350M 的许可证全文在 `licenses/`。T1 视觉模型均为 Apache-2.0(PaddlePaddle 各模型、D-FINE)或 MIT(TransNetV2),署名见上文「T1 视觉/文档节点」。
@@ -1514,4 +1698,8 @@ GPL 版本可以接受。履行的义务:使用官方、未修改的 `@ffmpeg/co
 和 `models.json` 写明对应源码(ffmpegwasm/ffmpeg.wasm 提交 `71aa99d37c02a7b4c435275ca9ef50e612f6efa1`,tag `v12.15`,其中锁定了 FFmpeg n5.1.4
 和所有依赖库的版本);镜像 core 的宿主应在同一目录提供该 NOTICE 和许可证。core 在独立的 worker 里运行,不属于插件包。
 
-完整列表见英文部分的表格。以下项目仍刻意未用:MuPDF.js 和 scribe.js(AGPL-3.0)、Ultralytics 系模型(AGPL-3.0)。
+完整列表见英文部分的表格。MuPDF.js 以前因 AGPL 列在「刻意未用」里;本插件本身是 AGPL-3.0 且以源码公开,打包 AGPL-3.0-or-later 的代码
+是兼容的,所以它现在是可选的 `mupdf` 实现(默认仍是 Apache-2.0 的 pdf.js)。仍然不用:scribe.js(AGPL-3.0,用不上)。
+
+关于页署名(本次新增):「X-ASR zh-en by Gilgamesh-J(Apache-2.0),ONNX by k2-fsa/sherpa-onnx」「Qwen3.5-0.8B by the Qwen team,
+Alibaba Cloud(Apache-2.0),纯文本 ONNX by onnx-community」;库:「MuPDF © Artifex Software, Inc.(AGPL-3.0-or-later)」。
