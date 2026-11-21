@@ -125,6 +125,67 @@
         "attribution": "LFM2.5-350M by Liquid AI, Inc., licensed under the LFM Open License v1.0"
     },
     {
+        "id": "qwen3.5-0.8b-text",
+        "source": "modelscope:onnx-community/Qwen3.5-0.8B-Text-ONNX",
+        "files": [
+            "config.json",
+            "generation_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "chat_template.jinja",
+            "onnx/model_q4f16.onnx",
+            "onnx/model_q4f16.onnx_data",
+            "onnx/model_q4.onnx",
+            "onnx/model_q4.onnx_data"
+        ],
+        "checksums": {
+            "config.json": {
+                "size": 1989,
+                "sha256": "46fdb58a1817864df3cb39bc494e6fa6aa36f29277daec13b63d2a407a312f52"
+            },
+            "generation_config.json": {
+                "size": 120,
+                "sha256": "a33e6e9d6ec02519266a2b1d6eb573cb2bd83e46a021a6d59ab605f86aecaf3a"
+            },
+            "tokenizer.json": {
+                "size": 19226111,
+                "sha256": "89da80cc6689bef4d90cc1028249436975ffb0814618f1d93c65310e05801a9b"
+            },
+            "tokenizer_config.json": {
+                "size": 10027,
+                "sha256": "f4561156698bf189bb995e1b88ea8e2060583234bf5f151972ee4e1faf47d086"
+            },
+            "chat_template.jinja": {
+                "size": 7755,
+                "sha256": "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80"
+            },
+            "onnx/model_q4f16.onnx": {
+                "size": 597442,
+                "sha256": "955bb412842e4d3dc1eb71a2ae60c3243a3db5d6e746a23f437028189599fcc0"
+            },
+            "onnx/model_q4f16.onnx_data": {
+                "size": 469331968,
+                "sha256": "74b281b74489172937c36cbc3755d33cedd55a1f681fc77426ac9c0bf153d528"
+            },
+            "onnx/model_q4.onnx": {
+                "size": 482783,
+                "sha256": "ea717eb57f3a00e0ac5dc5b537ef8385945f1fbd4f9323d8dd45aa652ae8554e"
+            },
+            "onnx/model_q4.onnx_data": {
+                "size": 550764544,
+                "sha256": "ac65b1f1220314ef2debc02545f5aa5702ec201e723ca45dce2bfefc85921859"
+            }
+        },
+        "slots": [
+            "gen-text"
+        ],
+        "approxMB": 490,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://www.modelscope.cn/models/Qwen/Qwen3.5-0.8B/file/view/master/LICENSE",
+        "attribution": "Qwen3.5-0.8B by the Qwen team, Alibaba Cloud (text-only ONNX export by onnx-community)",
+        "notes": "The gen-text alternative under Apache-2.0. q4f16 (490 MB first download) on GPUs with shader-f16, q4 (571 MB) otherwise. The repo has no LICENSE file: copy Qwen/Qwen3.5-0.8B's LICENSE next to it when hosting. Checksums are verified while transformers.js streams each file, before it is cached."
+    },
+    {
         "id": "sensevoice-small-int8",
         "source": "modelscope:pengzhendong/sherpa-onnx-sense-voice-zh-en-ja-ko-yue",
         "files": [
@@ -142,7 +203,8 @@
             }
         },
         "slots": [
-            "transcribe"
+            "transcribe",
+            "transcribe-timestamp"
         ],
         "approxMB": 240,
         "license": "FunASR Model License v1.1",
@@ -154,6 +216,48 @@
             "verified": "2026-11-21: the archive matches GitHub's digest; model.int8.onnx, tokens.txt and LICENSE inside it are byte-identical (SHA-256) to the ModelScope mirror"
         },
         "notes": "Mirror by pengzhendong (k2-fsa/WeNet contributor). ModelScope's iic/SenseVoiceSmall metadata says Apache-2.0, but the official README defers to the FunASR model license; attribution is mandatory and comparisons must stay factual. Commercial use is still open in QwenAudio/SenseVoice#334: re-check before launch, fall back to X-ASR (Apache-2.0) if needed."
+    },
+    {
+        "id": "x-asr-zh-en-int8",
+        "source": "modelscope:mogenle/sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03",
+        "files": [
+            "encoder-epoch-99-avg-1.int8.onnx",
+            "decoder-epoch-99-avg-1.onnx",
+            "joiner-epoch-99-avg-1.int8.onnx",
+            "tokens.txt"
+        ],
+        "checksums": {
+            "encoder-epoch-99-avg-1.int8.onnx": {
+                "size": 161015713,
+                "sha256": "7f6aa62056efd8af9da13e0faa81cd3f284d2fb2e3b63de56fd2dfd3450910dc"
+            },
+            "decoder-epoch-99-avg-1.onnx": {
+                "size": 11309084,
+                "sha256": "72f47405d3c1033bebccbef82f90071e7b4ba3e71b9c986f2b74244b25723aed"
+            },
+            "joiner-epoch-99-avg-1.int8.onnx": {
+                "size": 2581422,
+                "sha256": "aedb7fa697b2ab43f20499826fff7c997eea7d67db77be97769aeeeb726e63b3"
+            },
+            "tokens.txt": {
+                "size": 58806,
+                "sha256": "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c"
+            }
+        },
+        "slots": [
+            "transcribe",
+            "transcribe-timestamp"
+        ],
+        "approxMB": 175,
+        "license": "Apache-2.0",
+        "licenseUrl": "https://github.com/Gilgamesh-J/X-ASR/blob/main/LICENSE",
+        "attribution": "X-ASR zh-en by Gilgamesh-J (https://github.com/Gilgamesh-J/X-ASR), Apache-2.0. ONNX export and int8 quantization by k2-fsa/sherpa-onnx (modified: converted to ONNX and quantized).",
+        "upstream": {
+            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03.tar.bz2",
+            "sha256": "5d02c36d7b44e886b7c8f0d8e051f8713acab96c264bb6ef9e718be39a6a2224",
+            "verified": "2026-11-22: the archive (ModelScope copy adaada88/sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8) matches GitHub's release digest; the four files inside it are byte-identical (SHA-256) to the ModelScope mirror"
+        },
+        "notes": "Offline (non-streaming) Zipformer2 transducer with punctuation and casing, Chinese and English. The repo has no LICENSE file: put the Apache-2.0 text next to the weights when hosting. Recognizing the whole 133 s demo recording in one pass fails inside the encoder (an attention reshape), so the plugin never feeds it more than 30 s at once."
     },
     {
         "id": "silero-vad-v5",
@@ -169,7 +273,8 @@
         },
         "slots": [
             "vad-segment",
-            "transcribe"
+            "transcribe",
+            "transcribe-timestamp"
         ],
         "approxMB": 2.3,
         "license": "MIT",
@@ -180,7 +285,7 @@
             "sha256": "2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f",
             "verified": "2026-11-21: byte-identical to the official v5.1 / v5.1.2 release file"
         },
-        "notes": "transcribe loads it only for audio longer than 30 s."
+        "notes": "transcribe and transcribe-timestamp load it for audio longer than 30 s; transcribe-timestamp always (its speech spans refine the sentence times)."
     },
     {
         "id": "pyannote-segmentation-3.0",

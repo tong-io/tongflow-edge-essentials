@@ -88,4 +88,37 @@ export const CED_TINY = {
     },
 } as const satisfies ModelSpec;
 
-export const AUDIO_MODELS: readonly ModelSpec[] = [SENSEVOICE, SILERO_VAD, PYANNOTE_SEGMENTATION, CAMPLUS_ZH, CED_TINY];
+/**
+ * X-ASR zh-en (Apache-2.0), sherpa-onnx's int8 export
+ * `sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03`. The ModelScope
+ * mirror holds the release archive's files unpacked; they were checked byte for byte
+ * against the archive whose SHA-256 the GitHub release `k2-fsa/sherpa-onnx` `asr-models` lists.
+ */
+export const X_ASR = {
+    id: "x-asr-zh-en-int8",
+    repo: "mogenle/sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03",
+    files: {
+        encoder: {
+            path: "encoder-epoch-99-avg-1.int8.onnx",
+            size: 161015713,
+            sha256: "7f6aa62056efd8af9da13e0faa81cd3f284d2fb2e3b63de56fd2dfd3450910dc",
+        },
+        decoder: {
+            path: "decoder-epoch-99-avg-1.onnx",
+            size: 11309084,
+            sha256: "72f47405d3c1033bebccbef82f90071e7b4ba3e71b9c986f2b74244b25723aed",
+        },
+        joiner: {
+            path: "joiner-epoch-99-avg-1.int8.onnx",
+            size: 2581422,
+            sha256: "aedb7fa697b2ab43f20499826fff7c997eea7d67db77be97769aeeeb726e63b3",
+        },
+        tokens: {
+            path: "tokens.txt",
+            size: 58806,
+            sha256: "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c",
+        },
+    },
+} as const satisfies ModelSpec;
+
+export const AUDIO_MODELS: readonly ModelSpec[] = [SENSEVOICE, SILERO_VAD, PYANNOTE_SEGMENTATION, CAMPLUS_ZH, CED_TINY, X_ASR];

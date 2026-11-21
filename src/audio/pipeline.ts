@@ -10,9 +10,11 @@ import { encodeBase64 } from "../util/base64.js";
 import { EdgeError } from "../util/errors.js";
 import { fileStem } from "../util/text.js";
 import { decodeAnyAudio, type DecodedAudio, SAMPLE_RATE } from "./decode.js";
-import { FFMPEG_SUFFIX, forcesFfmpeg } from "../ffmpeg/select.js";
+import { baseModel, FFMPEG_SUFFIX, forcesFfmpeg } from "../ffmpeg/select.js";
 import { diarize, type DiarizeOptions } from "./diarize.js";
-import { SenseVoice, senseVoiceLanguage } from "./sensevoice.js";
+import { SenseVoice, type SenseVoiceLanguage, senseVoiceLanguage, senseVoiceText } from "./sensevoice.js";
+import { type RecognizedChunk, sentenceTimestamps, type SpanS, type TimedToken, type TimeStamp } from "./timestamps.js";
+import { XAsr, xAsrText } from "./transducer.js";
 import { tagAudio } from "./tagging.js";
 import { detectSpeech, loadVad, mergeSpans, VAD_DEFAULTS, type VadOptions } from "./vad.js";
 import { encodeWav } from "./wav.js";
@@ -24,7 +26,8 @@ import { checkpoint } from "./checkpoint.js";
  * instead of WebCodecs ("换实现"); the default falls back to ffmpeg by itself.
  */
 export const SLOT_MODELS = {
-    transcribe: ["sensevoice-small", `sensevoice-small${FFMPEG_SUFFIX}`],
+    transcribe: ["sensevoice-small", `sensevoice-small${FFMPEG_SUFFIX}`, "x-asr-zh-en", `x-asr-zh-en${FFMPEG_SUFFIX}`],
+    "transcribe-timestamp": ["sensevoice-small", `sensevoice-small${FFMPEG_SUFFIX}`, "x-asr-zh-en", `x-asr-zh-en${FFMPEG_SUFFIX}`],
     "vad-segment": ["silero-vad-v5", `silero-vad-v5${FFMPEG_SUFFIX}`],
     "diarize-speakers": ["pyannote-campplus-zh", `pyannote-campplus-zh${FFMPEG_SUFFIX}`],
     "audio-tag": ["ced-tiny", `ced-tiny${FFMPEG_SUFFIX}`],
@@ -77,9 +80,52 @@ function loadSenseVoice(ctx: EdgeContext): Promise<SenseVoice> {
     return senseVoice;
 }
 
+let xAsr: Promise<XAsr> | null = null;
+function loadXAsr(ctx: EdgeContext): Promise<XAsr> {
+    xAsr ??= XAsr.load(ctx);
+    xAsr.catch(() => {
+        xAsr = null;
+    });
+    return xAsr;
+}
+
+/** One speech recognizer behind `transcribe` / `transcribe-timestamp`, picked by the node's model. */
+interface Recognizer {
+    name: string;
+    load(ctx: EdgeContext): Promise<{ recognize(samples: Float32Array): Promise<{ text: string; tokens: TimedToken[] }> }>;
+    /** A sentence's text from its token texts. */
+    join(tokens: string[]): string;
+}
+
+function recognizer(ctx: EdgeContext, language: string | undefined): Recognizer {
+    // `x-asr-zh-en+ffmpeg-wasm` is X-ASR with the audio decoded by ffmpeg.wasm (see `decode`).
+    if (baseModel(ctx.model) === "x-asr-zh-en") {
+        // X-ASR is Chinese/English only and detects which by itself: the language hint is not used.
+        return {
+            name: "X-ASR",
+            load: async (c) => {
+                const m = await loadXAsr(c);
+                return { recognize: (samples) => m.recognize(samples, c.signal) };
+            },
+            join: xAsrText,
+        };
+    }
+    const lang: SenseVoiceLanguage = senseVoiceLanguage(language);
+    return {
+        name: "SenseVoice",
+        load: async (c) => {
+            const m = await loadSenseVoice(c);
+            return { recognize: (samples) => m.recognize(samples, lang) };
+        },
+        join: senseVoiceText,
+    };
+}
+
 /** Audio up to this long is recognized in one pass; longer audio is cut at pauses. */
 const ONE_PASS_S = 30;
 const ASR_CHUNK_S = 25;
+/** VAD settings for cutting long audio: short pauses count, no span over the chunk length. */
+const ASR_VAD: Partial<VadOptions> = { minSilenceMs: 300, maxSpeechS: ASR_CHUNK_S };
 
 /** Join recognized pieces: no separator between CJK text, a space between Latin words. */
 export function joinTranscript(parts: string[]): string {
@@ -93,36 +139,79 @@ export function joinTranscript(parts: string[]): string {
     return out;
 }
 
-export async function transcribe(bytes: Uint8Array, language: string | undefined, ctx: EdgeContext, filename?: string): Promise<string> {
-    checkModel(ctx, "transcribe");
+interface Recognized {
+    text: string;
+    chunks: RecognizedChunk[];
+    /** Speech spans in seconds (only computed when asked for, or for long audio). */
+    spans: SpanS[];
+    duration: number;
+    rec: Recognizer;
+}
+
+/**
+ * Decode, then recognize: audio up to {@link ONE_PASS_S} in one pass, longer audio in
+ * chunks of up to {@link ASR_CHUNK_S} cut at pauses the VAD finds. `withSpans` runs the
+ * VAD on short audio too (for timestamps).
+ */
+async function recognizeAudio(
+    bytes: Uint8Array,
+    language: string | undefined,
+    ctx: EdgeContext,
+    withSpans: boolean,
+    filename?: string,
+): Promise<Recognized> {
     const audio = await decode(ctx, bytes, filename);
-    const lang = senseVoiceLanguage(language);
-    ctx.onProgress({ fraction: 0.1, message: "loading SenseVoice" });
-    if (audio.duration <= ONE_PASS_S) {
-        const sv = await loadSenseVoice(ctx);
-        ctx.onProgress({ fraction: 0.15, message: "transcribing" });
-        const r = await sv.recognize(audio.samples, lang);
-        ctx.onProgress({ fraction: 1, message: "done" });
-        return r.text;
+    const rec = recognizer(ctx, language);
+    ctx.onProgress({ fraction: 0.1, message: `loading ${rec.name}` });
+    const onePass = audio.duration <= ONE_PASS_S;
+    const [model] = await Promise.all([rec.load(ctx), onePass && !withSpans ? Promise.resolve() : loadVad(ctx)]);
+    let spans: SpanS[] = [];
+    let chunks: { start: number; end: number }[];
+    if (onePass) {
+        if (withSpans) {
+            const found = await detectSpeech(audio.samples, ctx, ASR_VAD, stage(ctx, 0.1, 0.15, "finding speech"));
+            spans = found.map((sp) => ({ start: sp.start / SAMPLE_RATE, end: sp.end / SAMPLE_RATE }));
+        }
+        chunks = [{ start: 0, end: audio.samples.length }];
+    } else {
+        const found = await detectSpeech(audio.samples, ctx, ASR_VAD, stage(ctx, 0.1, 0.25, "finding speech"));
+        spans = found.map((sp) => ({ start: sp.start / SAMPLE_RATE, end: sp.end / SAMPLE_RATE }));
+        chunks = mergeSpans(found, ASR_CHUNK_S * SAMPLE_RATE);
     }
-    const [sv] = await Promise.all([loadSenseVoice(ctx), loadVad(ctx)]);
-    const spans = await detectSpeech(
-        audio.samples,
-        ctx,
-        { minSilenceMs: 300, maxSpeechS: ASR_CHUNK_S },
-        stage(ctx, 0.1, 0.25, "finding speech"),
-    );
-    const chunks = mergeSpans(spans, ASR_CHUNK_S * SAMPLE_RATE);
-    const report = stage(ctx, 0.25, 1, "transcribing");
+    const report = stage(ctx, onePass ? 0.15 : 0.25, 1, "transcribing");
     const parts: string[] = [];
+    const out: RecognizedChunk[] = [];
     for (let i = 0; i < chunks.length; i++) {
         await checkpoint(ctx.signal);
         const c = chunks[i]!;
-        const r = await sv.recognize(audio.samples.subarray(c.start, c.end), lang);
+        const r = await model.recognize(audio.samples.subarray(c.start, c.end));
         parts.push(r.text);
-        report((i + 1) / chunks.length, `transcribing ${i + 1}/${chunks.length}`);
+        out.push({ start: c.start / SAMPLE_RATE, end: c.end / SAMPLE_RATE, tokens: r.tokens });
+        report((i + 1) / chunks.length, chunks.length > 1 ? `transcribing ${i + 1}/${chunks.length}` : "transcribing");
     }
-    return joinTranscript(parts);
+    ctx.onProgress({ fraction: 1, message: "done" });
+    return { text: joinTranscript(parts), chunks: out, spans, duration: audio.duration, rec };
+}
+
+export async function transcribe(bytes: Uint8Array, language: string | undefined, ctx: EdgeContext, filename?: string): Promise<string> {
+    checkModel(ctx, "transcribe");
+    return (await recognizeAudio(bytes, language, ctx, false, filename)).text;
+}
+
+/**
+ * `transcribe-timestamp`: the transcript plus sentence-level segments
+ * `{start, end, text}` in seconds (see `timestamps.ts`).
+ */
+export async function transcribeTimestamp(
+    bytes: Uint8Array,
+    language: string | undefined,
+    ctx: EdgeContext,
+    filename?: string,
+): Promise<{ text: string; time_stamps: TimeStamp[] }> {
+    checkModel(ctx, "transcribe-timestamp");
+    const r = await recognizeAudio(bytes, language, ctx, true, filename);
+    const time_stamps = sentenceTimestamps(r.chunks, r.spans, r.duration, r.rec.join);
+    return { text: r.text, time_stamps };
 }
 
 export async function vadSegment(bytes: Uint8Array, filename: string | undefined, ctx: EdgeContext): Promise<Asset[]> {

@@ -33,6 +33,50 @@ describe.skipIf(!EDGE_MODELS_DIR)("audio models (Node, onnxruntime-web wasm)", (
         expect(ctx.rec.downloads.some((d) => d.label.endsWith("sherpa-onnx-sense-voice-zh-en-ja-ko-yue/model.int8.onnx"))).toBe(true);
     }, 300_000);
 
+    it("transcribe (x-asr-zh-en) = sherpa-onnx's X-ASR output, with its punctuation", async () => {
+        const ctx = nodeCtx(undefined, { model: "x-asr-zh-en" });
+        const r = await timed("transcribe x-asr 21 s", () => impls.transcribe({ audio: wav("dialog-zh.wav") }, ctx));
+        expect(r.error).toBeUndefined();
+        // sherpa-onnx 2.0.2, same int8 files, greedy search: '大家好， 今天…市行， 第三是售后服务。'
+        // (the plugin drops the space sherpa leaves after full-width punctuation).
+        expect(r.text).toBe(
+            "大家好，今天我们讨论一下下个季度的产品计划。好的，我先介绍一下市场度的调研结果。请重点说明用户最关心的三个问题。第一是价格，第二是市行，第三是售后服务。",
+        );
+        expect(ctx.rec.downloads.some((d) => d.label.endsWith("sherpa-onnx-x-asr-zipformer-transducer-zh-en-punct-int8-2026-06-03/encoder-epoch-99-avg-1.int8.onnx"))).toBe(true);
+    }, 300_000);
+
+    it("transcribe-timestamp: sentences in order, inside the audio, on the speech sherpa's VAD finds", async () => {
+        // sherpa-onnx's VAD on dialog-zh.wav: 1.09–5.68, 6.81–10.03, 11.52–14.99, 16.09–19.63
+        const speech = [
+            [1.09, 5.68],
+            [6.81, 10.03],
+            [11.52, 14.99],
+            [16.09, 19.63],
+        ];
+        for (const model of ["sensevoice-small", "x-asr-zh-en"]) {
+            const r = await timed(`transcribe-timestamp ${model} 21 s`, () => impls.transcribeTimestamp({ audio: wav("dialog-zh.wav") }, nodeCtx(undefined, { model })));
+            expect(r.error).toBeUndefined();
+            const ts = r.time_stamps!;
+            console.warn(`[audio-models] ${model}`, JSON.stringify(ts));
+            expect(ts.length).toBeGreaterThanOrEqual(4);
+            expect(ts.map((s) => s.text).join("")).toBe(r.text);
+            for (let i = 0; i < ts.length; i++) {
+                const s = ts[i]!;
+                expect(s.start).toBeGreaterThanOrEqual(0);
+                expect(s.end).toBeLessThanOrEqual(21.05);
+                expect(s.end).toBeGreaterThan(s.start);
+                if (i) expect(s.start).toBeGreaterThanOrEqual(ts[i - 1]!.end);
+                // every sentence overlaps real speech and starts near a speech onset or inside speech
+                expect(speech.some(([a, b]) => s.start < b! && s.end > a!), s.text).toBe(true);
+            }
+            expect(ts[0]!.start).toBeGreaterThan(0.6);
+            expect(ts[0]!.start).toBeLessThan(1.3);
+            expect(ts[0]!.text).toMatch(/^大家好/);
+            expect(ts.at(-1)!.end).toBeLessThan(21.05);
+            expect(ts.at(-1)!.end).toBeGreaterThan(19.3);
+        }
+    }, 300_000);
+
     it("vad-segment: four utterances as 16 kHz mono WAV", async () => {
         const r = await timed("vad-segment 21 s", () => impls.vadSegment({ audio: wav("dialog-zh.wav") }, nodeCtx()));
         expect(r.error).toBeUndefined();
