@@ -7,7 +7,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const nm = (p) => join(root, "node_modules", p);
+/** A source starting with "/" is relative to the repo root, anything else to node_modules. */
+const nm = (p) => (p.startsWith("/") ? join(root, p.slice(1)) : join(root, "node_modules", p));
 const dist = join(root, "dist", "assets");
 
 /** [source in node_modules, destination under dist/assets] — keep in sync with test/helpers/node-ctx.ts. */
@@ -19,10 +20,11 @@ const COPIES = [
     ["pdfjs-dist/LICENSE", "pdfjs/LICENSE"],
     ["@xberg-io/xberg-wasm/pkg/web/xberg_wasm_bg.wasm", "xberg/xberg_wasm_bg.wasm"], // legacy formats (~41 MB)
     ["@xberg-io/xberg-wasm/LICENSE", "xberg/LICENSE"],
-    // onnxruntime-web, shared by every ML node: transformers.js imports `onnxruntime-web/webgpu`,
-    // whose bundle loads the asyncify build (WASM + WebGPU EPs).
-    ["onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm", "ort/ort-wasm-simd-threaded.asyncify.wasm"],
+    // onnxruntime-web (the version pinned in package.json): the WebGPU-capable
+    // wasm build transformers.js loads through env.backends.onnx.wasm.wasmPaths.
+    ["onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm", "ort/ort-wasm-simd-threaded.asyncify.wasm"], // ~29 MB
     ["onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.mjs", "ort/ort-wasm-simd-threaded.asyncify.mjs"],
+    ["/licenses/onnxruntime-web-MIT.txt", "ort/LICENSE"], // the npm package ships no LICENSE file
 ];
 
 const LIMIT = 100 * 1024 * 1024;

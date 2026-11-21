@@ -49,6 +49,7 @@
     },
     "dependencies": {
         "@huggingface/transformers": "4.3.2",
+        "@huggingface/transformers-structured-output": "4.3.2",
         "@kenjiuno/msgreader": "1.29.0",
         "@xberg-io/xberg-wasm": "1.4.2",
         "@zip.js/zip.js": "2.25.0",
