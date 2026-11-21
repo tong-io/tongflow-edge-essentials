@@ -1,7 +1,7 @@
 {
     "plugin": {
         "name": "Edge essentials",
-        "description": "On-device document parsing, PDF page rendering, audio and first/last-frame extraction, video concat / mute / audio merge (Mediabunny + WebCodecs, ffmpeg.wasm for formats the browser cannot read), language detection, knowledge-base chunking and embedding, and audio models (transcription, speech segmentation, speaker diarization, audio event tagging) and small vision/document models (OCR with PP-OCRv6, page orientation, layout, tables, shot splitting, object detection) in the browser, plus optional WebGPU nodes: image understanding (Qwen3.5-0.8B), GLM-OCR, image embeddings (EmbeddingGemma 2) and key-point extraction (LFM2.5-350M). Files never leave the device."
+        "description": "On-device document parsing, PDF page rendering, audio and first/last-frame extraction, video concat / mute / audio merge (Mediabunny + WebCodecs, ffmpeg.wasm for formats the browser cannot read), language detection, knowledge-base chunking and embedding, and audio models (transcription, speech segmentation, speaker diarization, audio event tagging) and small vision/document models (OCR with PP-OCRv6, page orientation, layout, tables, shot splitting, object detection) in the browser, plus optional WebGPU nodes: image understanding (Qwen3.5-0.8B), GLM-OCR, image embeddings (EmbeddingGemma 2) and key-point extraction (LFM2.5-350M). Alternative implementations to pick per node: YOLO26n and RF-DETR nano (objects), PP-DocLayoutV3 (layout), LFM2.5-VL-450M, SmolVLM2 and Florence-2 (image understanding), Chinese-CLIP (image embeddings), PDFium, pdf2md, officeparser and Readability (document parsing). Files never leave the device."
     },
     "runtime": "browser",
     "entry": "dist/index.js",

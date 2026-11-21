@@ -18,7 +18,7 @@ understanding, GLM-OCR, image embeddings and key-point extraction with 250–850
 
 | Slot | Method | What it does | Library |
 |---|---|---|---|
-| `parse-document` | `parseDocument` | Any supported document → Markdown-flavoured `text`. `images` is always `[]` for now. | see below |
+| `parse-document` | `parseDocument` | Any supported document → Markdown-flavoured `text`. `images` is always `[]` for now. Alternatives: `pdfium`, `pdf2md`, `officeparser`, `readability` ([below](#alternative-implementations-vision-and-documents)) | see below |
 | `render-pages` | `renderPages` | PDF → one PNG per page (`pages`, `x-expand-each`), 150 DPI, longest side capped at 4096 px. Browser only (OffscreenCanvas). | pdf.js 6.5.438 |
 | `extract-audio` | `extractAudio` | The primary audio track of a video, **remuxed without re-encoding** when possible: AAC/AC-3 → `.m4a`, Opus/Vorbis → audio-only `.webm`, MP3 → `.mp3`, FLAC → `.flac`, PCM → `.wav`; anything else is transcoded to AAC with WebCodecs (MP3 when ffmpeg.wasm does it). | Mediabunny 1.66.2; ffmpeg.wasm fallback, see [Media nodes and ffmpeg.wasm](#media-nodes-and-ffmpegwasm) |
 | `get-first-frame` | `getFirstFrame` | First decodable video frame as PNG (rotation applied). WebCodecs; ffmpeg.wasm for codecs the browser does not decode. | same |
@@ -36,10 +36,10 @@ understanding, GLM-OCR, image embeddings and key-point extraction with 250–850
 | `audio-tag` | `audioTag` | Audio → `tags` JSON `[{label,score}]` (CED-tiny, AudioSet) | same |
 | `ocr-image` | `ocrImage` | Image → reading-ordered `text` (PP-OCRv6 small; `tiny`, or `glm-ocr` on WebGPU) | onnxruntime-web 1.31.1, see [T1 vision/document nodes](#t1-visiondocument-nodes) |
 | `image-orient` | `imageOrient` | Image → upright page PNG (PP-LCNet doc_ori) | same |
-| `layout-detect` | `layoutDetect` | Page image → `layout` JSON + cropped `regions` in reading order (PP-DocLayout-S / -M) | same |
+| `layout-detect` | `layoutDetect` | Page image → `layout` JSON + cropped `regions` in reading order (PP-DocLayout-S / -M; alternative PP-DocLayoutV3) | same |
 | `table-recognize` | `tableRecognize` | Table image → `html` (SLANet_plus + PP-OCRv6) | same |
 | `split-video` | `splitVideo` | Video → one `video_parts` file per shot (TransNetV2; remuxed where the cut is a key frame; frames and shots by ffmpeg.wasm for files the browser cannot read) | same + Mediabunny 1.66.2 |
-| `detect-objects` | `detectObjects` | Image → `objects` JSON (D-FINE nano, COCO) | transformers.js 4.3.2 |
+| `detect-objects` | `detectObjects` | Image → `objects` JSON (D-FINE nano, COCO; alternatives YOLO26n, RF-DETR nano) | transformers.js 4.3.2 (alternatives: onnxruntime-web) |
 
 `parse-document` dispatches by MIME type, then file extension, then the leading bytes (so a
 nameless upload still works):
@@ -380,10 +380,10 @@ storage quota.
 
 | Slot | Method | Model (`models`) | What it does |
 |---|---|---|---|
-| `image-gen-text` | `imageGenText` | `qwen3.5-0.8b` | What the canvas `imageGenTextNode` runs. `text` (prompt, may be blank) + optional `image`; honours `system`, `max_new_tokens` (192), `enable_thinking` (off), `temperature` (0.7, 0 = greedy), `top_p` (0.8), `top_k` (20). Without a prompt it describes the image **in 1–3 Simplified Chinese sentences**, only what is visible, no invented names or numbers, 「无法辨认」 when unsure; the default system prompt keeps answers in Chinese. Without an image it is a plain text chat. Repetition control: see below. |
-| `image-describe` | `imageGenText` (same method) | `qwen3.5-0.8b` | `image` + optional `text` / `userPrompt`; same behaviour. |
+| `image-gen-text` | `imageGenText` | `qwen3.5-0.8b` (alternatives `lfm2.5-vl-450m`, `smolvlm2-500m`, `florence-2-base`, [below](#alternative-implementations-vision-and-documents)) | What the canvas `imageGenTextNode` runs. `text` (prompt, may be blank) + optional `image`; honours `system`, `max_new_tokens` (192), `enable_thinking` (off), `temperature` (0.7, 0 = greedy), `top_p` (0.8), `top_k` (20). Without a prompt it describes the image **in 1–3 Simplified Chinese sentences**, only what is visible, no invented names or numbers, 「无法辨认」 when unsure; the default system prompt keeps answers in Chinese. Without an image it is a plain text chat. Repetition control: see below. |
+| `image-describe` | `imageGenText` (same method) | `qwen3.5-0.8b` (same alternatives) | `image` + optional `text` / `userPrompt`; same behaviour. |
 | `ocr-image` (alternative) | `ocrImageGlm` | `glm-ocr` | GLM-OCR page reading, Markdown out (tables included). Not the slot default: see [Alternative implementations](#alternative-implementations). |
-| `embed-image` | `embedImage` | `embeddinggemma-2` | One L2-normalized 768-d vector per image, as a `vectors` file in the TFV1 format (below). Same space as EmbeddingGemma 2 text embeddings (query prefix `task: search result \| query: `). The audio encoder is never loaded. |
+| `embed-image` | `embedImage` | `embeddinggemma-2` (alternative `chinese-clip-base`, 512 dims, WASM) | One L2-normalized 768-d vector per image, as a `vectors` file in the TFV1 format (below). Same space as EmbeddingGemma 2 text embeddings (query prefix `task: search result \| query: `). The audio encoder is never loaded. |
 | `gen-text` | `genText` | `lfm2.5-350m` | Structured key-point extraction from `text`; `userPrompt` narrows it. The decoder is constrained to the JSON schema `{"key_points": string[]}` (transformers.js structured output) and `text` is that JSON. The instruction follows the document's language (a Chinese document gets a Chinese prompt and Chinese key points). |
 
 Advanced params (`_params`): `max_new_tokens` everywhere; `max_pixels` for the vision models
@@ -477,6 +477,127 @@ advantage" counts as commercial, so a free demo that promotes a company does too
 `gen-text` in a deployment, confirm who operates it and that its group is under the threshold;
 if it is not, leave the slot off or pick another model. Mark any modified weight files as modified
 (§4(b)). The license grants no trademark rights.
+
+### Alternative implementations: vision and documents
+
+More implementations of existing slots, for the canvas "换实现" (replace implementation) menu. Each
+is an extra **model** id in the slot's one manifest entry (default first, so nothing changes unless
+the user picks one), the slot's method dispatches on `ctx.model`, and each returns exactly the
+default's output shape. Every model is in `models.json` with per-file size + SHA-256, license,
+licenseUrl and attribution; files come from the model base, are checked before they are cached
+(raw-ORT models through the model hub; transformers.js models through `ml/verified-fetch.ts`, see
+below), report download progress, and load lazily.
+
+| Slot | Model id (default first) | Implementation | Runs on | First download |
+|---|---|---|---|---|
+| `detect-objects` | `dfine-nano-fp16`, `dfine-nano`, **`yolo26n`**, **`rf-detr-nano`** | YOLO26n (Ultralytics, NMS-free, `onnx-community/yolo26n-ONNX` fp16), RF-DETR nano (Roboflow, `onnx-community/rfdetr_nano-ONNX` fp16), raw onnxruntime-web | WASM (`_params.device: "webgpu"` opts in) | 5.0 MB / 54.4 MB |
+| `layout-detect` | `pp-doclayout-s`, `pp-doclayout-m`, **`pp-doclayoutv3`** | PP-DocLayoutV3 (official ONNX `PaddlePaddle/PP-DocLayoutV3_onnx`), raw onnxruntime-web | WASM | 130.5 MB (one file) |
+| `image-gen-text`, `image-describe` | `qwen3.5-0.8b`, **`lfm2.5-vl-450m`**, **`smolvlm2-500m`**, **`florence-2-base`** | transformers.js 4.3.2 | WebGPU only (same error as T3 without it) | 319 / 361 / 218 MB (with `shader-f16`; 368 / 347 / 218 MB without) |
+| `embed-image` | `embeddinggemma-2`, **`chinese-clip-base`** | Chinese-CLIP ViT-B/16 (`Xenova/chinese-clip-vit-base-patch16`, int8 joint graph), raw onnxruntime-web | WASM | 190.8 MB |
+| `parse-document` | **`builtin`**, **`pdfium`**, **`pdf2md`**, **`officeparser`**, **`readability`** | @embedpdf/pdfium 2.15.1, @opendocsg/pdf2md 0.4.0, officeparser 8.9.0 (slim browser build), @mozilla/readability 0.6.0 on linkedom | worker, no model | pdfium wasm 4.6 MB (in `dist/assets/pdfium/`) |
+
+**`detect-objects`.** Both alternatives are DETR-style set predictors (`logits [300, C]`,
+`pred_boxes [300, 4]` as relative centre/size), decoded by `vision/detect-post.ts`: per-class
+sigmoid (an export that already emits probabilities is detected and not squashed twice), the
+best named class per query, boxes scaled to source pixels and clipped, then the same same-label
+IoU ≥ 0.7 merge as D-FINE, best first. transformers.js' generic post-processing (a softmax with the
+last class dropped as "no object") is not used: neither model has a no-object class. YOLO26n reads
+640² scaled to 0..1; RF-DETR nano 384² with ImageNet normalization (its fp16 export: about twice as fast as int8 on WASM, same detections). Default threshold 0.35
+(`_params.threshold`). YOLO26n is AGPL-3.0 (Ultralytics), which this AGPL-3.0 plugin can carry;
+ship the AGPL text with the weights.
+
+**`layout-detect` `pp-doclayoutv3`.** The official ONNX: the page resized to 800² (aspect not kept),
+0..1, `im_shape` + `scale_factor` in; rows `[class, score, x1, y1, x2, y2, order]` in source pixels
+out (the per-box masks are ignored: regions are the boxes, as with S/M). The **reading order is the
+model's own** (its seventh column), which is what V3 is for: photographed, skewed and curved pages.
+It has 25 classes (most shared with S/M; new: `display_formula`, `inline_formula`,
+`reference_content`, `vertical_text`, `vision_footnote`). Regions keep the
+`<page stem>-r<NN>-<label>.png` filenames, and `table-recognize` knows the V3 labels too, so
+fanning every region into it still skips non-tables without a model. One 130.5 MB file: a model
+host with a 100 MB per-file cap must raise it for this repo.
+
+**`image-gen-text` / `image-describe` alternatives** (`slots/vlm-alt.ts`, loaded only when picked):
+- `lfm2.5-vl-450m`: LFM2.5-VL-450M (Liquid AI), multilingual; Qwen's Chinese default prompt and system
+  prompt; the image is scaled to ≤ 640 px so the processor does not tile it (≤ 256 image tokens).
+  **LFM Open License v1.0**, same revenue threshold as LFM2.5-350M (below); the onnx-community repo's
+  `LICENSE` file is empty, so ship `licenses/LFM-Open-License-v1.0.txt` (byte-identical to Liquid AI's).
+- `smolvlm2-500m`: SmolVLM2-500M-Video-Instruct (Hugging Face, Apache-2.0). **English-centric**: an
+  English default prompt, answers in English. One 512² view (64 tokens) unless
+  `_params.image_splitting: true`.
+- `florence-2-base`: Florence-2-base (Microsoft, MIT). **English only, and task-driven**: it cannot
+  follow a free-form prompt, so it runs `<MORE_DETAILED_CAPTION>`, or the task token given as the
+  prompt (`<CAPTION>`, `<OCR>`, … from its processor config); it needs an image (no text chat). Its q4f16 merged decoder does not load in onnxruntime-web 1.31.1 ("Subgraph output (logits) is an outer scope value"), so it always loads the q4 graphs.
+
+All three use the anti-loop settings of the Qwen fix (repetition penalty 1.1 and a no-repeat 4-gram
+on the generated tokens only, the clause/loop post-filter), plus a sentence-level de-duplication for
+English, greedy decoding by default, and a **128-token** default budget (`max_new_tokens`).
+
+**`embed-image` `chinese-clip-base`.** No vision-only ONNX of Chinese-CLIP is published, so the joint
+int8 graph runs with a two-token `[CLS] [SEP]` text input (next to free), and the vector is its
+`image_embeds`, L2-normalized: **512 dims** (EmbeddingGemma 2: 768). The TFV1 file carries its dims
+and one run uses one model, so nothing downstream changes; `_params.dims` other than 512 fails. The
+vector is in Chinese-CLIP's space: text queries must be embedded with Chinese-CLIP's text tower.
+Runs on WASM, so unlike the default it needs no GPU.
+
+**`parse-document`.** The manifest `models` list is per slot, so `formats/impls.ts` says which
+formats each alternative reads, and any other format runs the built-in parser with a progress
+message (`PDFium (@embedpdf/pdfium) does not read .docx files: using the built-in parser`):
+- `pdfium` (PDF): PDFium text per page, pages separated by a blank line.
+- `pdf2md` (PDF): Markdown with headings from font sizes, lists, page numbers and repeated headers
+  removed. It reaches pdf.js through unpdf, which is pointed at the plugin's own pdf.js (same
+  assets, CJK CMaps); unpdf's 1.7 MB serverless pdf.js is aliased away, and look-alike radicals are
+  folded back as in the default.
+- `officeparser` (.docx/.docm/.dotx, .xlsx/.xlsm, .pptx/.ppsx/.pptm/.potx, .odt/.ott, .odp/.otp,
+  .ods, .rtf): officeparser's AST → its Markdown generator, OCR off, no remote assets, the YAML
+  front matter of file metadata dropped. Sheets and slides are separated by `---` with no sheet or
+  slide names (the default prints `## <sheet>` / `## Slide N`). A lazy 6.3 MB chunk (1.9 MB gzip).
+- `readability` (HTML): Mozilla Readability on linkedom, then the default HTML → Markdown converter;
+  the title stays the top heading.
+
+**Integrity for transformers.js downloads.** transformers.js caches files without a checksum, so
+`ml/verified-fetch.ts` is its `env.fetch`: a full GET of any file `models.json` lists with a
+checksum streams through while it is hashed (incremental SHA-256, `util/sha256.ts`, so download
+progress keeps flowing), and the body errors at the end on a size or hash mismatch; transformers.js
+reads the whole body before caching, so a bad file fails the node and is never cached. Range probes
+and files without checksums pass through. This now also covers D-FINE.
+
+**Dropped: scribe.js (`ocr-image`).** Its OCR path is not usable inside the plugin's module worker:
+it starts its own nested module workers from URLs relative to its own modules
+(`new Worker(new URL('./worker/generalWorker.js', import.meta.url))`, plus a Tesseract worker), loads
+~20 MB of fonts and two Tesseract wasm builds the same way, and fetches language data from jsDelivr
+unless told otherwise. None of that survives being bundled into one entry; shipping the 46 MB
+package unbundled under `dist/` with traineddata on the model base would be a separate project. Its
+engine is Tesseract LSTM, which research/09 rates well below PP-OCRv6 for Chinese, and it is AGPL code
+(the plugin may only carry AGPL *weights* per the brief).
+
+**Measured** (Apple Silicon, headless Chromium, WASM single-threaded except the WebGPU rows; models
+served from `EDGE_MODELS_DIR`; "cold" = first call in a fresh worker, including fetch, Cache API and
+session creation; other agents' builds and browser tests ran on the same machine at the same time, so
+absolute times are noisy; compare within a row group):
+
+| Slot | Implementation | Input | Cold | Warm | Result |
+|---|---|---|---|---|---|
+| detect-objects | `dfine-nano-fp16` (default) | cat.jpg / astronaut.jpg | 5.9 s | 1.1 s | cat 0.63; person 0.44. Whiteboard photo: cup 0.49, three "diningtable" boxes, no cat or person |
+| detect-objects | `yolo26n` | same | 3.0 s | 0.9 s | cat 0.83; person 0.88. Whiteboard photo: cat 0.91, cup 0.73, person 0.54 |
+| detect-objects | `rf-detr-nano` (fp16) | same | 5.1 s | 2.1 s | cat 0.96; person 0.98. Whiteboard photo: cup 0.91, cat 0.89, person 0.49 (int8 export: same detections, 4.0 s warm) |
+| layout-detect | `pp-doclayout-s` (default) | paper.pdf p1 / 采购合同-扫描件.pdf p1 | 7.7 s* | 0.8 s | 15 regions / 6 regions on the scanned contract (table found) |
+| layout-detect | `pp-doclayoutv3` | same | 20.8 s | 11.4 s | 17 regions (also finds the abstract and both figure titles) / 15 regions on the scan (title, every clause paragraph, the table, a footnote); table chains into table-recognize |
+| embed-image | `embeddinggemma-2` (default, WebGPU) | cat.jpg / flipped cat | 13.0 s | 1.6 s | 768 dims; cos(cat, flipped) 0.994 > cos(cat, astronaut) 0.614 |
+| embed-image | `chinese-clip-base` (WASM) | same | 15.3 s | 2.1 s | 512 dims; cos(cat, flipped) 0.987 > cos(cat, astronaut) 0.510 |
+| image-gen-text | `qwen3.5-0.8b` (default) | cat.jpg / whiteboard.jpg | 58.7 s | 45.2 s | 「一只虎斑猫的特写，眼睛炯炯有神，背景虚化。」/ reads 「Q4 冲刺目标」「新版 WMS 12/15 上线」「扫码识别率 ≥ 99.5%」 |
+| image-gen-text | `lfm2.5-vl-450m` | same | 18.0 s | 3.4 s | 「这是一张猫的特写照片，猫有着绿色的眼睛和棕色的条纹。背景模糊不清。…」/ names the whiteboard, coffee and cat, misreads the heading (「Q4 神秘项目标」) |
+| image-gen-text | `smolvlm2-500m` | same | 19.4 s | 9.1 s | "a close up photo of a cat's face with the eyes looking directly at the camera" / "The image is a presentation slide with the following information and content:" (no detail) |
+| image-gen-text | `florence-2-base` | same | 13.8 s | 4.6 s | a detailed English caption of the cat / "a slide from a presentation… a woman wearing an orange jacket… holding a rocket… a cup of coffee… a cat's face"; reads only "Q4" of the text |
+| parse-document | `builtin` / `pdfium` / `pdf2md` | 产品白皮书.pdf (3 pages) | 0.6 / 0.36 / 0.37 s | 34 / 14 / 44 ms | 1327 / 1329 / 1464 chars; pdfium's text equals pdf.js'; pdf2md adds 28 headings (it promotes large-font lines, too eagerly on CJK) |
+| parse-document | `builtin` / `pdfium` / `pdf2md` | paper.pdf | 0.29 / 0.18 / 0.33 s | 75 / 32 / 126 ms | 789 / 789 / 979 chars; pdf2md 38 headings |
+| parse-document | `builtin` / `pdfium` / `pdf2md` | 采购合同-扫描件.pdf (no text layer) | | | all three: success, empty text |
+| parse-document | `builtin` / `officeparser` | 项目周例会纪要.docx | 0.43 / 0.75 s | 66 / 164 ms | 1186 / 1172 chars, both 6 headings and 15 table rows |
+| parse-document | `builtin` / `officeparser` | 月度销售.xlsx | 0.14 / 0.51 s | 5 / 24 ms | same 50 table rows; officeparser has no sheet names (the default writes `## 10月订单明细`) |
+| parse-document | `builtin` / `officeparser` | 方案汇报.pptx | 0.13 / 0.55 s | 16 / 26 ms | 928 / 890 chars, 5 headings, 8 table rows each |
+| parse-document | `builtin` / `officeparser` | report.odt | 0.34 / 0.53 s | 6 / 12 ms | identical text (the default runs xberg here) |
+| parse-document | `builtin` / `readability` | article.html | 0.29 / 0.84 s | 18 / 7 ms | identical Markdown; nav and footer dropped by both |
+
+\* the cold S row also paid the worker's first onnxruntime-web start while other jobs were loading the machine; the T1 table above has the quiet-machine numbers (0.19 s).
 
 ### T2 audio nodes
 
@@ -683,7 +804,9 @@ needs. Gzip transfer on first use, chunks included:
 | gen-text | + structured output ≈ 15 kB |
 | any T1 vision node | slot glue 5.3 kB (`impl`) + geometry 2.6 kB + model registry 5.5 kB + hub 1.7 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared), then the model: OCR small 31 MB / tiny 6.3 MB, orientation 6.8 MB, layout 4.9 / 23.5 MB, table 7.8 MB + OCR small |
 | split-video | + split glue 3 kB + Mediabunny 195 kB + TransNetV2 31 MB |
-| detect-objects | glue 1 kB + transformers.js 123 kB + the shared runtime + D-FINE 7.9 MB (fp16, default) / 4.5 MB (int8) |
+| detect-objects | glue 1 kB + transformers.js 123 kB + the shared runtime + D-FINE 7.9 MB (fp16, default) / 4.5 MB (int8); alternatives: + 1.3 kB glue, YOLO26n 5.0 MB / RF-DETR nano 54.4 MB |
+| parse-document alternatives | `pdfium` 38 kB + wasm 2.1 MB gzip (4.6 MB raw); `pdf2md` 12 kB + pdf.js (shared); `officeparser` 1.9 MB (6.3 MB raw); `readability` 11 kB + linkedom (shared) |
+| image-gen-text alternatives / chinese-clip-base | glue 2.6 kB / 1.0 kB, then the model (218–368 MB / 191 MB) |
 | any T2 audio node | audio pipeline 12 kB + Mediabunny 196 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared with transformers.js), then the models: SenseVoice 240 MB, VAD 2.3 MB, diarization 34 MB, CED 6.2 MB |
 
 `dist/` is committed: the scanner requires the manifest's `entry` to exist, and hosts load the
@@ -744,6 +867,16 @@ browser run checks that every T3 method fails with the WebGPU error (headless Ch
 adapter). Real inference runs only with `EDGE_MODELS_DIR` (above), which also launches Chromium with `--enable-unsafe-webgpu`
 (plus `--use-angle=metal` on macOS, which exposes the real GPU headless; `EDGE_WEBGPU=1` alone
 adds the flags) and runs each model whose files are present; the others are skipped.
+
+**Alternative implementations** (`test/node/alternatives.test.ts`, `test/browser/alternatives.test.ts`):
+Node covers the DETR decoding, PP-DocLayoutV3 rows and labels, the VLM prompts and clean-up, the
+streaming SHA-256 and verified fetch, the parser selection, and runs the four `parse-document`
+alternatives on the fixtures. The browser file compares every alternative with its slot's default
+in the built worker and prints one table (the one in
+[Alternative implementations](#alternative-implementations-vision-and-documents)); it reads the
+scanall demo samples from `../../../ctsource/scanall/demo/samples` (or `SCANALL_SAMPLES_DIR`), the
+parser rows always run, the model rows need `EDGE_MODELS_DIR`. Run it on its own:
+`EDGE_MODELS_DIR=… npx vitest run --project browser --silent=false test/browser/alternatives.test.ts`.
 
 **The `tongflow` dependency** is a `file:` link to a TongFlow checkout at
 `../../tongflow/packages/tongflow` (that is, `tongflow` cloned next to the directory holding this
@@ -806,6 +939,10 @@ and none is GPL-only. The ffmpeg.wasm core is GPL-2.0-or-later and is **download
 | @huggingface/transformers-structured-output | 4.3.2 | Apache-2.0 | `gen-text` only |
 | onnxruntime-web | 1.31.1 | MIT | Bundled JS + `dist/assets/ort/` wasm; notice in `licenses/onnxruntime-web-MIT.txt` |
 | **@ffmpeg/core** (ffmpeg.wasm) | 0.12.10 (FFmpeg n5.1.4) | **GPL-2.0-or-later** | ⚠️ Not in `dist/`: fetched from the model base on first use, unmodified. Full text in `licenses/GPL-2.0.txt`, corresponding source in `licenses/ffmpeg-wasm-NOTICE.txt` and `models.json` |
+| @embedpdf/pdfium | 2.15.1 | MIT | `parse-document` `pdfium` only; PDFium itself BSD-3-Clause (`dist/assets/pdfium/LICENSE.pdfium`) |
+| @opendocsg/pdf2md | 0.4.0 | MIT | `pdf2md` only; plus unpdf 1.9.1 (MIT, without its bundled pdf.js) and enumify (MIT) |
+| officeparser | 8.9.0 | MIT | `officeparser` only, slim browser build (no Tesseract); it bundles fflate, @xmldom/xmldom, file-type, pdf.js and Node polyfills (MIT / BSD / Apache-2.0) |
+| @mozilla/readability | 0.6.0 | Apache-2.0 | `readability` only |
 
 Model weights are not part of this package; they are downloaded from the host's model base. Their
 licenses are in the [T3 models table](#t3-webgpu-nodes) and the [T2 audio section](#t2-audio-nodes);
@@ -827,7 +964,12 @@ tag `v12.15`, which pins FFmpeg n5.1.4 and every library); a host that mirrors t
 serve that NOTICE and the license next to it. It runs in its own worker and is never part of the
 plugin bundle.
 
-Still avoided on purpose: MuPDF.js and scribe.js (AGPL-3.0) and the Ultralytics models (AGPL-3.0).
+Still avoided on purpose: MuPDF.js and scribe.js (AGPL-3.0 code). The Ultralytics YOLO26n *weights*
+(AGPL-3.0) are an opt-in `detect-objects` alternative: no Ultralytics code is bundled
+(pre/post-processing is this plugin's own), and this plugin is AGPL-3.0 itself.
+Attribution for the alternatives: "YOLO26n by Ultralytics (AGPL-3.0)", "RF-DETR by Roboflow (Apache-2.0)",
+"PP-DocLayoutV3 by PaddlePaddle (Apache-2.0)", "LFM2.5-VL-450M by Liquid AI, Inc. (LFM Open License v1.0)",
+"SmolVLM2 by Hugging Face (Apache-2.0)", "Florence-2 by Microsoft (MIT)", "Chinese-CLIP by OFA-Sys (MIT)".
 
 Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (Apache-2.0). The audio
 fixtures in `test/fixtures/audio/` were synthesized for this repo with macOS `say` (voices Tingting and Reed). The
@@ -855,7 +997,7 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 
 | Slot | 方法 | 作用 | 库 |
 |---|---|---|---|
-| `parse-document` | `parseDocument` | 各类文档转成 Markdown 风格的 `text`;`images` 暂时恒为 `[]` | 见下表 |
+| `parse-document` | `parseDocument` | 各类文档转成 Markdown 风格的 `text`;`images` 暂时恒为 `[]`。备选:`pdfium`、`pdf2md`、`officeparser`、`readability`(见「备选实现:视觉与文档」) | 见下表 |
 | `render-pages` | `renderPages` | PDF 每页输出一张 PNG(`pages`,`x-expand-each`)。分辨率 150 DPI,最长边不超过 4096 px。仅限浏览器(需要 OffscreenCanvas) | pdf.js 6.5.438 |
 | `extract-audio` | `extractAudio` | 抽取视频的主音轨,能不重编码就直接转封装:AAC/AC-3 转 `.m4a`,Opus/Vorbis 转纯音频 `.webm`,MP3 转 `.mp3`,FLAC 转 `.flac`,PCM 转 `.wav`。其它编码用 WebCodecs 转成 AAC(走 ffmpeg.wasm 时转成 MP3) | Mediabunny 1.66.2;ffmpeg.wasm 兜底,见「音视频节点与 ffmpeg.wasm」 |
 | `get-first-frame` | `getFirstFrame` | 视频第一帧可解码画面,输出 PNG(已按旋转信息校正)。用 WebCodecs 解码;浏览器解不了的编码交给 ffmpeg.wasm | 同上 |
@@ -873,10 +1015,10 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 | `audio-tag` | `audioTag` | 音频输出事件标签 JSON `[{label,score}]`(CED-tiny,AudioSet) | 同上 |
 | `ocr-image` | `ocrImage` | 图片转按阅读顺序的 `text`(PP-OCRv6 small;可换 `tiny`,WebGPU 下可换 `glm-ocr`) | onnxruntime-web 1.31.1,见下方「T1 视觉/文档节点」 |
 | `image-orient` | `imageOrient` | 图片转正,输出 PNG(PP-LCNet doc_ori) | 同上 |
-| `layout-detect` | `layoutDetect` | 页面图输出 `layout` JSON 和按阅读顺序裁好的 `regions`(PP-DocLayout-S/-M) | 同上 |
+| `layout-detect` | `layoutDetect` | 页面图输出 `layout` JSON 和按阅读顺序裁好的 `regions`(PP-DocLayout-S/-M;备选 PP-DocLayoutV3) | 同上 |
 | `table-recognize` | `tableRecognize` | 表格图转 `html`(SLANet_plus + PP-OCRv6) | 同上 |
 | `split-video` | `splitVideo` | 视频按镜头切成多个 `video_parts`(TransNetV2;切点在关键帧上时直接转封装;浏览器读不了的文件由 ffmpeg.wasm 采帧和写片段) | 同上,加 Mediabunny 1.66.2 |
-| `detect-objects` | `detectObjects` | 图片输出 `objects` JSON(D-FINE nano,COCO 类别) | transformers.js 4.3.2 |
+| `detect-objects` | `detectObjects` | 图片输出 `objects` JSON(D-FINE nano,COCO 类别;备选 YOLO26n、RF-DETR nano) | transformers.js 4.3.2(备选用 onnxruntime-web) |
 
 `parse-document` 按以下顺序判断格式:先看 MIME,再看扩展名,最后看文件头字节。没有文件名的上传也能识别。
 
@@ -1053,10 +1195,10 @@ TransNetV2 © 2020 Tomáš Souček(MIT),ONNX 导出者 q502892879;D-FINE 由 Pet
 
 | Slot | 方法 | 模型(`models`) | 作用 |
 |---|---|---|---|
-| `image-gen-text` | `imageGenText` | `qwen3.5-0.8b` | 画布 `imageGenTextNode` 用的 slot。`text`(提示词,可为空)加可选 `image`;支持 `system`、`max_new_tokens`(192)、`enable_thinking`(默认关)、`temperature`(0.7,0 为贪心)、`top_p`(0.8)、`top_k`(20)。没有提示词时**用 1–3 句简体中文描述图片**,只写看得见的内容,不编造名称和数字,看不清写「无法辨认」;默认 system 提示也要求中文作答;没有图片时就是纯文本对话。防复读见下文 |
-| `image-describe` | `imageGenText`(同一方法) | `qwen3.5-0.8b` | `image` 加可选 `text`/`userPrompt`,行为相同 |
+| `image-gen-text` | `imageGenText` | `qwen3.5-0.8b`(备选 `lfm2.5-vl-450m`、`smolvlm2-500m`、`florence-2-base`) | 画布 `imageGenTextNode` 用的 slot。`text`(提示词,可为空)加可选 `image`;支持 `system`、`max_new_tokens`(192)、`enable_thinking`(默认关)、`temperature`(0.7,0 为贪心)、`top_p`(0.8)、`top_k`(20)。没有提示词时**用 1–3 句简体中文描述图片**,只写看得见的内容,不编造名称和数字,看不清写「无法辨认」;默认 system 提示也要求中文作答;没有图片时就是纯文本对话。防复读见下文 |
+| `image-describe` | `imageGenText`(同一方法) | `qwen3.5-0.8b`(备选同上) | `image` 加可选 `text`/`userPrompt`,行为相同 |
 | `ocr-image`(备选实现) | `ocrImageGlm` | `glm-ocr` | GLM-OCR 整页识别,输出 Markdown(含表格)。不是该 slot 的默认实现,见下文「备选实现」 |
-| `embed-image` | `embedImage` | `embeddinggemma-2` | 每张图一条 L2 归一化的 768 维向量,以 TFV1 格式的 `vectors` 文件输出;与 EmbeddingGemma 2 文本向量同一空间。不加载音频编码器 |
+| `embed-image` | `embedImage` | `embeddinggemma-2`(备选 `chinese-clip-base`,512 维,WASM) | 每张图一条 L2 归一化的 768 维向量,以 TFV1 格式的 `vectors` 文件输出;与 EmbeddingGemma 2 文本向量同一空间。不加载音频编码器 |
 | `gen-text` | `genText` | `lfm2.5-350m` | 从 `text` 做结构化要点抽取,`userPrompt` 可限定范围。解码受 JSON schema `{"key_points": string[]}` 约束(transformers.js 结构化输出),输出 `text` 即该 JSON。提示词跟随原文语言:中文原文用中文指令、出中文要点 |
 
 高级参数(`_params`):均支持 `max_new_tokens`;视觉模型支持 `max_pixels`(Qwen3.5 默认 448²,GLM-OCR 默认 1024²,按像素预算等比缩放,
@@ -1107,6 +1249,65 @@ LFM2.5-350M q4f16 对约 200 字的中文合同条款做 `gen-text`,首次 6–1
 **只有当使用方的法律实体(连同其控制、受其控制或与其同受控制的所有关联实体)年收入低于 1000 万美元时,商业使用才在授权范围内**
 (许可证的 "Threshold",§1、§5)。"直接或间接商业利益" 都算商业使用,替公司揽客的免费 demo 也算。启用 `gen-text` 前,必须由业务方确认运营主体
 及其关联方收入低于门槛;否则不要开启该 slot,或改用其它模型。修改过的权重文件要标注已修改(§4(b));许可证不授予商标权。
+
+### 备选实现:视觉与文档
+
+已有 slot 的更多实现,供画布「换实现」菜单选择。每个备选都是该 slot 唯一一条 manifest 记录里多出的一个**模型** id(默认在前,
+用户不选就什么都不变),方法按 `ctx.model` 分派,输出形状与默认实现完全一致。所有模型都在 `models.json` 里登记了逐文件的大小和
+SHA-256、许可证、licenseUrl 和署名;文件从 model base 获取,缓存前先校验(直接用 ORT 的走模型 hub,transformers.js 的走
+`ml/verified-fetch.ts`),上报下载进度,按需加载。
+
+| Slot | 模型 id(默认在前) | 实现 | 运行于 | 首次下载 |
+|---|---|---|---|---|
+| `detect-objects` | `dfine-nano-fp16`、`dfine-nano`、**`yolo26n`**、**`rf-detr-nano`** | YOLO26n(Ultralytics,免 NMS,`onnx-community/yolo26n-ONNX` fp16)、RF-DETR nano(Roboflow,`onnx-community/rfdetr_nano-ONNX` fp16),直接用 onnxruntime-web | WASM(`_params.device: "webgpu"` 可开 WebGPU) | 5.0 MB / 54.4 MB |
+| `layout-detect` | `pp-doclayout-s`、`pp-doclayout-m`、**`pp-doclayoutv3`** | PP-DocLayoutV3(官方 ONNX `PaddlePaddle/PP-DocLayoutV3_onnx`) | WASM | 130.5 MB(单文件) |
+| `image-gen-text`、`image-describe` | `qwen3.5-0.8b`、**`lfm2.5-vl-450m`**、**`smolvlm2-500m`**、**`florence-2-base`** | transformers.js 4.3.2 | 仅 WebGPU(没有时报与 T3 相同的错误) | 319 / 361 / 218 MB(有 `shader-f16`;没有时 368 / 347 / 218 MB) |
+| `embed-image` | `embeddinggemma-2`、**`chinese-clip-base`** | Chinese-CLIP ViT-B/16(`Xenova/chinese-clip-vit-base-patch16`,int8 图文联合图) | WASM | 190.8 MB |
+| `parse-document` | **`builtin`**、**`pdfium`**、**`pdf2md`**、**`officeparser`**、**`readability`** | @embedpdf/pdfium 2.15.1、@opendocsg/pdf2md 0.4.0、officeparser 8.9.0(slim 浏览器版)、@mozilla/readability 0.6.0(跑在 linkedom 上) | worker,无模型 | pdfium wasm 4.6 MB(`dist/assets/pdfium/`) |
+
+- **目标检测**:两个备选都是 DETR 式集合预测(`logits [300, C]`、`pred_boxes [300, 4]`,相对中心点和宽高),由 `vision/detect-post.ts` 解码:
+  逐类 sigmoid(导出时已是概率的会被识别出来,不再重复 sigmoid)、每个 query 取得分最高的有名类别、框换算到原图像素并裁剪,再按与 D-FINE 相同的规则合并
+  同类 IoU ≥ 0.7 的框,按分数降序。没有用 transformers.js 通用的后处理(softmax 并把最后一类当「无目标」丢掉):这两个模型都没有无目标类。
+  YOLO26n 输入 640²、缩放到 0..1;RF-DETR nano 输入 384²、ImageNet 归一化(用 fp16 导出:WASM 上约比 int8 快一倍,检出相同)。默认阈值 0.35(`_params.threshold`)。
+  YOLO26n 是 AGPL-3.0(Ultralytics),本插件本身是 AGPL-3.0,可以携带;再分发权重时随附 AGPL 文本。
+- **版面 `pp-doclayoutv3`**:官方 ONNX,页面缩放到 800²(不保持比例)、0..1,输入 `im_shape` + `scale_factor`,输出原图像素坐标的
+  `[class, score, x1, y1, x2, y2, order]`(逐框 mask 不用:区域仍是矩形框,与 S/M 一致)。**阅读顺序直接用模型自己预测的**(第 7 列),
+  这正是 V3 的用途:翻拍、倾斜、弯曲的页面。共 25 类(大多与 S/M 相同;新增 `display_formula`、`inline_formula`、`reference_content`、
+  `vertical_text`、`vision_footnote`)。区域文件名仍是 `<页面文件名主干>-r<NN>-<label>.png`,`table-recognize` 也认识 V3 的标签,
+  把所有区域都接进表格识别时,非表格区域照样不加载模型直接跳过。单文件 130.5 MB,模型服务器若有 100 MB 单文件上限需对该仓库放开。
+- **图像理解备选**(`slots/vlm-alt.ts`,选中才加载):
+  - `lfm2.5-vl-450m`:LFM2.5-VL-450M(Liquid AI),多语言;沿用 Qwen 的中文默认提示和 system 提示;图片先缩到 ≤ 640 px,处理器不分块(≤ 256 个图像 token)。
+    **LFM Open License v1.0**,收入门槛与 LFM2.5-350M 相同(见下文);onnx-community 仓库里的 `LICENSE` 是空文件,请随权重附上
+    `licenses/LFM-Open-License-v1.0.txt`(与 Liquid AI 原文逐字节相同)。
+  - `smolvlm2-500m`:SmolVLM2-500M-Video-Instruct(Hugging Face,Apache-2.0)。**以英文为主**:默认用英文提示、英文作答。默认只看一张 512² 全图
+    (64 个 token),`_params.image_splitting: true` 时分块。
+  - `florence-2-base`:Florence-2-base(Microsoft,MIT)。**只出英文,而且只认任务**:不能按自由提示词作答,所以运行 `<MORE_DETAILED_CAPTION>`,
+    或把提示词本身当任务 token(`<CAPTION>`、`<OCR>` 等,见其处理器配置);必须有图片(不能纯文本对话)。它的 q4f16 合并 decoder 在 onnxruntime-web 1.31.1 里加载失败,所以一律用 q4 的图。
+  - 三者都沿用 Qwen 修复里的防复读设置(只作用于生成 token 的 1.1 重复惩罚和 4-gram 不重复、分句/循环后处理),英文另加整句去重,默认贪心解码,
+    默认上限 **128** 个新 token(`max_new_tokens`)。
+- **图像向量 `chinese-clip-base`**:Chinese-CLIP 没有公开的纯视觉塔 ONNX,所以运行 int8 图文联合图,文本侧只喂两个 token `[CLS] [SEP]`
+  (几乎不耗时),取 `image_embeds` 并做 L2 归一化:**512 维**(EmbeddingGemma 2 是 768 维)。TFV1 文件自带维数,一次运行只用一个模型,
+  下游不受影响;`_params.dims` 只能是 512。向量处于 Chinese-CLIP 自己的空间,文本查询要用 Chinese-CLIP 的文本塔计算。跑在 WASM 上,不需要 GPU。
+- **文档解析**:manifest 的 `models` 是按 slot 而不是按格式列的,所以 `formats/impls.ts` 写明每个备选能读哪些格式,其它格式一律走内置解析器,
+  并在进度里说明(如 `PDFium (@embedpdf/pdfium) does not read .docx files: using the built-in parser`):
+  - `pdfium`(PDF):PDFium 逐页文本,页与页之间空一行。
+  - `pdf2md`(PDF):输出 Markdown,按字号推断标题,识别列表,去掉页码和重复的页眉页脚。它经 unpdf 调 pdf.js,unpdf 被指向插件自己的 pdf.js
+    (同一套资源、CJK CMap);unpdf 自带的 1.7 MB serverless pdf.js 被别名替换掉,不进 `dist/`;部首码位同样还原成汉字。
+  - `officeparser`(.docx/.docm/.dotx、.xlsx/.xlsm、.pptx/.ppsx/.pptm/.potx、.odt/.ott、.odp/.otp、.ods、.rtf):officeparser 的 AST
+    经它自己的 Markdown 生成器输出,关闭 OCR、不取远程资源,去掉开头的 YAML 文件元数据。工作表、幻灯片之间用 `---` 分隔,没有表名或页号
+    (内置解析器会写 `## <表名>` / `## Slide N`)。懒加载块 6.3 MB(gzip 1.9 MB)。
+  - `readability`(HTML):linkedom 上跑 Mozilla Readability,再用内置的 HTML → Markdown 转换;页面标题仍是一级标题。
+- **transformers.js 下载的完整性**:transformers.js 缓存文件时不做校验,所以把 `ml/verified-fetch.ts` 设为它的 `env.fetch`:`models.json`
+  里有校验值的文件,整文件 GET 时一边流式交给 transformers.js 一边做增量 SHA-256(`util/sha256.ts`,下载进度照常上报),读到末尾大小或哈希不符就让响应体报错;
+  transformers.js 读完整个响应体才写缓存,所以坏文件会让节点失败,而且不会进缓存。Range 探测和没有校验值的文件原样放行。D-FINE 也因此受到校验。
+- **放弃:scribe.js(`ocr-image`)**。它的 OCR 路径在插件的 module worker 里用不了:它会从相对自身模块的 URL 再起嵌套 module worker
+  (`new Worker(new URL('./worker/generalWorker.js', import.meta.url))`,另有 Tesseract worker),同样方式加载约 20 MB 字体和两套 Tesseract wasm,
+  语言数据默认取自 jsDelivr。打进单一入口后这些都不成立;把 46 MB 的包原样放进 `dist/`、把 traineddata 放上 model base 是另一个项目。
+  它的引擎是 Tesseract LSTM,research/09 评估其中文效果明显不如 PP-OCRv6;而且它是 AGPL 代码(按 brief,插件只能携带 AGPL 的*权重*)。
+
+实测对比(质量与耗时)见英文部分的表格。结论:目标检测上 YOLO26n 最快、RF-DETR nano 分数最高,两者在白板照片上都检出了猫、杯子和人,默认的 D-FINE 没有;
+PP-DocLayoutV3 对扫描合同切得更细(15 个区域对 6 个),但 800² 输入在单线程 WASM 上慢一个数量级;LFM2.5-VL-450M 比 Qwen3.5-0.8B 快得多、能用中文描述,但读字会出错;
+SmolVLM2 和 Florence-2 只出英文,也读不出白板上的中文;Chinese-CLIP 不需要 GPU;文档解析的四个备选输出与内置解析器相当,pdf2md 会把大字号行过多地当成标题。
 
 ### T2 音频节点
 
