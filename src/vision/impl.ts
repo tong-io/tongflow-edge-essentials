@@ -11,7 +11,7 @@ import { readAsset } from "../slots/common.js";
 import { IMAGENET, type Source, crop, decodeImage, drawToRgba, needCanvas, rgbaToChw, rotate, toCanvas, toPng } from "../ml/canvas.js";
 import { fetchModelFile, fetchModelText, memo } from "../ml/model-files.js";
 import { type LoadedSession, createDeviceSession, pickDevice, loadOrt, run, tensor } from "../ml/ort.js";
-import { DOCLAYOUT_LABELS, layoutRegions } from "./layout-post.js";
+import { DOCLAYOUT_LABELS, layoutRegions, regionFilename, regionLabelOf } from "./layout-post.js";
 import { ocrModel, ocrText, readingOrder, recognizeText } from "./ocr.js";
 import { yamlList } from "./ocr-post.js";
 import { decodeTable, matchCells, tableDictionary, tableHtml } from "./table-post.js";
@@ -143,7 +143,6 @@ export async function layoutDetect(input: SlotInput<"layout-detect">, ctx: EdgeC
         const layout = await detectLayout(ctx, bmp, id, num(ctx.params?.threshold, 0.5));
         ctx.onProgress({ fraction: 0.5, message: `${layout.length} regions` });
         const stem = fileStem(asset.filename, "page");
-        const pad = String(layout.length).length;
         const regions: Asset[] = [];
         for (let i = 0; i < layout.length; i++) {
             throwIfAborted(ctx.signal);
@@ -152,7 +151,7 @@ export async function layoutDetect(input: SlotInput<"layout-detect">, ctx: EdgeC
             regions.push({
                 bytesBase64: encodeBase64(await toPng(c)),
                 mime: "image/png",
-                filename: `${stem}-r${String(i + 1).padStart(pad, "0")}-${r.label}.png`,
+                filename: regionFilename(stem, i, layout.length, r.label),
             });
             c.width = c.height = 0;
             ctx.onProgress({ fraction: 0.5 + 0.5 * ((i + 1) / layout.length), message: `cropped ${i + 1}/${layout.length}` });
@@ -169,7 +168,17 @@ const SLANET = "slanet-plus";
 const TABLE_MAX = 488;
 const tableDict = memo<string[]>();
 
+/**
+ * `table-recognize`. A `layout-detect` region whose filename names another label
+ * (`page1-r04-text.png`, see {@link regionFilename}) is not a table: it succeeds with empty
+ * `html` at once, without loading a model. A name without a layout label runs as usual.
+ */
 export async function tableRecognize(input: SlotInput<"table-recognize">, ctx: EdgeContext): Promise<EdgeSlotOutput<"table-recognize">> {
+    const label = regionLabelOf(input.image?.filename);
+    if (label && label !== "table") {
+        ctx.onProgress({ fraction: 1, message: `skipped: layout region "${label}" is not a table` });
+        return { success: true, html: "" };
+    }
     const { bmp } = await readImage(input.image, "table-recognize");
     try {
         ctx.onProgress({ fraction: 0, message: "loading table model" });
