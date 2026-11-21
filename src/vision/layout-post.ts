@@ -1,4 +1,4 @@
-/** PP-DocLayout post-processing: threshold, cross-class de-duplication, reading order. */
+/** PP-DocLayout (S, M, V3) post-processing: threshold, cross-class de-duplication, reading order. */
 import { type Box, columnOrder, coverage, iou } from "./geometry.js";
 
 /** Page furniture read before / after the body. */
@@ -11,6 +11,24 @@ export const DOCLAYOUT_LABELS = [
     "table", "table_title", "reference", "doc_title", "footnote", "header", "algorithm", "footer",
     "seal", "chart_title", "chart", "formula_number", "header_image", "footer_image", "aside_text",
 ];
+
+/** The 25 PP-DocLayoutV3 classes, in its inference.yml order (most shared with S/M). */
+export const DOCLAYOUT_V3_LABELS = [
+    "abstract", "algorithm", "aside_text", "chart", "content", "display_formula", "doc_title", "figure_title",
+    "footer", "footer_image", "footnote", "formula_number", "header", "header_image", "image", "inline_formula",
+    "number", "paragraph_title", "reference", "reference_content", "seal", "table", "text", "vertical_text",
+    "vision_footnote",
+];
+
+/** Every label a `layout-detect` region filename can carry (any of its models). */
+export const REGION_LABELS: ReadonlySet<string> = new Set([...DOCLAYOUT_LABELS, ...DOCLAYOUT_V3_LABELS]);
+
+export interface LayoutRowFormat {
+    /** Floats per row: 6 = `[class, score, x1, y1, x2, y2]` (S/M); 7 adds PP-DocLayoutV3's reading-order rank. */
+    stride?: number;
+    /** Use the model's own reading order (the 7th column, ascending) instead of {@link columnOrder}. */
+    modelOrder?: boolean;
+}
 
 export interface LayoutRegion {
     label: string;
@@ -32,10 +50,12 @@ export function layoutRegions(
     srcW: number,
     srcH: number,
     threshold = 0.5,
+    format: LayoutRowFormat = {},
 ): LayoutRegion[] {
-    const cand: { label: string; score: number; b: Box }[] = [];
+    const stride = format.stride ?? 6;
+    const cand: { label: string; score: number; b: Box; rank: number }[] = [];
     for (let i = 0; i < count; i++) {
-        const o = i * 6;
+        const o = i * stride;
         const cls = Math.round(rows[o]!), score = rows[o + 1]!;
         if (cls < 0 || score < threshold) continue;
         const b = {
@@ -45,7 +65,7 @@ export function layoutRegions(
             y2: Math.max(0, Math.min(srcH, rows[o + 5]!)),
         };
         if (b.x2 - b.x1 < 2 || b.y2 - b.y1 < 2) continue;
-        cand.push({ label: labels[cls] ?? String(cls), score, b });
+        cand.push({ label: labels[cls] ?? String(cls), score, b, rank: stride > 6 ? rows[o + 6]! : i });
     }
     cand.sort((a, b) => b.score - a.score);
     const kept: typeof cand = [];
@@ -53,11 +73,13 @@ export function layoutRegions(
         const dup = kept.some((k) => iou(k.b, c.b) > 0.8 || (coverage(c.b, k.b) > 0.9 && coverage(k.b, c.b) > 0.7));
         if (!dup) kept.push(c);
     }
-    const order = columnOrder(
-        kept.map((k) => k.b),
-        kept.map((k) => HEADER_LABELS.has(k.label)),
-        kept.map((k) => FOOTER_LABELS.has(k.label)),
-    );
+    const order = format.modelOrder && stride > 6
+        ? kept.map((_, i) => i).sort((a, b) => kept[a]!.rank - kept[b]!.rank || kept[a]!.b.y1 - kept[b]!.b.y1)
+        : columnOrder(
+              kept.map((k) => k.b),
+              kept.map((k) => HEADER_LABELS.has(k.label)),
+              kept.map((k) => FOOTER_LABELS.has(k.label)),
+          );
     return order.map((i) => {
         const k = kept[i]!;
         return {
@@ -102,12 +124,12 @@ const REGION_TAIL = /-r(\d+)-([a-z][a-z_]*)\.[A-Za-z0-9]+$/;
 
 /**
  * The PP-DocLayout label a {@link regionFilename} carries, or `undefined` when the name does
- * not end in `-r<NN>-<label>.<ext>` with one of {@link DOCLAYOUT_LABELS} (any directory part is
- * ignored).
+ * not end in `-r<NN>-<label>.<ext>` with one of {@link REGION_LABELS} (the S/M classes and
+ * PP-DocLayoutV3's; any directory part is ignored).
  */
 export function regionLabelOf(filename: string | undefined): string | undefined {
     if (!filename) return undefined;
     const base = filename.split(/[\\/]/).pop() ?? filename;
     const m = REGION_TAIL.exec(base);
-    return m && DOCLAYOUT_LABELS.includes(m[2]!) ? m[2] : undefined;
+    return m && REGION_LABELS.has(m[2]!) ? m[2] : undefined;
 }

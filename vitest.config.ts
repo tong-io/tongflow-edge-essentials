@@ -104,6 +104,8 @@ const WEBGPU_ARGS = ["--enable-unsafe-webgpu", "--enable-features=Vulkan", ...(p
 
 /** The host-side knowledge base (`@scanall/kb`), for the end-to-end ingest test; optional. */
 const scanallKb = process.env.SCANALL_KB_DIR ?? r("../../../ctsource/scanall/packages/kb");
+/** scanall's demo samples (real-library and real-model comparisons of the alternative implementations); optional. */
+const demoSamples = process.env.SCANALL_SAMPLES_DIR ?? r("../../../ctsource/scanall/demo/samples");
 
 export default defineConfig({
     test: {
@@ -137,7 +139,12 @@ export default defineConfig({
                         ? { headers: { "Cross-Origin-Opener-Policy": "same-origin", "Cross-Origin-Embedder-Policy": "require-corp" } }
                         : {}),
                     fs: {
-                        allow: [r("./"), realpathSync(r("./node_modules/tongflow")), ...(existsSync(scanallKb) ? [scanallKb] : [])],
+                        allow: [
+                            r("./"),
+                            realpathSync(r("./node_modules/tongflow")),
+                            ...(existsSync(scanallKb) ? [scanallKb] : []),
+                            ...(existsSync(demoSamples) ? [demoSamples] : []),
+                        ],
                     },
                 },
                 publicDir: rawPublicDir(),
@@ -146,6 +153,7 @@ export default defineConfig({
                     __EDGE_MODELS__: JSON.stringify(modelsDir),
                     __EDGE_WEBGPU__: JSON.stringify(WEBGPU),
                     __SCANALL_KB__: JSON.stringify(existsSync(`${scanallKb}/src/index.ts`) ? `/@fs${scanallKb}/src/index.ts` : ""),
+                    __DEMO_SAMPLES__: JSON.stringify(existsSync(demoSamples) ? `/@fs${demoSamples}/` : ""),
                 },
                 test: {
                     name: "browser",

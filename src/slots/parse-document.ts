@@ -1,5 +1,6 @@
 import type { EdgeContext } from "../context.js";
 import { detectFormat, extensionOf, type DocFormat } from "../formats/detect.js";
+import { type ParseImpl, pickParser } from "../formats/impls.js";
 import type { SlotImpl } from "../types.js";
 import { EdgeError } from "../util/errors.js";
 import { decodeText, tidyText } from "../util/text.js";
@@ -40,7 +41,25 @@ async function parseAs(format: DocFormat, bytes: Uint8Array, mime: string | unde
     }
 }
 
-/** `parse-document`: any supported document → Markdown-flavoured text. */
+/** An alternative implementation (the node's model) for a format it handles (see `formats/impls.ts`). */
+async function parseWith(impl: Exclude<ParseImpl, "builtin">, bytes: Uint8Array, ext: string, ctx: EdgeContext): Promise<string> {
+    switch (impl) {
+        case "pdfium":
+            return (await import("../formats/pdfium.js")).parsePdfPdfium(bytes, ctx);
+        case "pdf2md":
+            return (await import("../formats/pdf2md.js")).parsePdfMarkdown(bytes, ctx);
+        case "officeparser":
+            return (await import("../formats/officeparser.js")).parseWithOfficeparser(bytes, ext, ctx);
+        case "readability":
+            return (await import("../formats/readability.js")).parseHtmlReadability(decodeText(bytes));
+    }
+}
+
+/**
+ * `parse-document`: any supported document → Markdown-flavoured text. The node's model picks an
+ * alternative parser (`pdfium`, `pdf2md`, `officeparser`, `readability`); formats it does not
+ * read go to the built-in parser, with a progress message saying so.
+ */
 export const parseDocument: SlotImpl<"parse-document"> = (input, ctx) =>
     guard(ctx, async () => {
         const doc = input.document;
@@ -50,8 +69,11 @@ export const parseDocument: SlotImpl<"parse-document"> = (input, ctx) =>
             const what = [doc.mime, extensionOf(doc.filename) && `.${extensionOf(doc.filename)}`].filter(Boolean).join(", ");
             throw new EdgeError(`unsupported document format${what ? ` (${what})` : ""}`);
         }
-        ctx.onProgress({ message: `parsing ${format}` });
-        const text = await parseAs(format, bytes, doc.mime, doc.filename, ctx);
+        const ext = extensionOf(doc.filename);
+        const { impl, note } = pickParser(ctx.model, format, ext);
+        if (note) ctx.onProgress({ message: note });
+        ctx.onProgress({ message: `parsing ${format}${impl === "builtin" ? "" : ` with ${impl}`}` });
+        const text = impl === "builtin" ? await parseAs(format, bytes, doc.mime, doc.filename, ctx) : await parseWith(impl, bytes, ext || format, ctx);
         ctx.onProgress({ fraction: 1 });
         return { success: true, text, images: [] };
     });

@@ -1,12 +1,12 @@
 {
     "plugin": {
         "name": "Edge essentials",
-        "description": "On-device document parsing, PDF page rendering, audio and first/last-frame extraction, video concat / mute / audio merge (Mediabunny + WebCodecs, ffmpeg.wasm for formats the browser cannot read), language detection, knowledge-base chunking and embedding, and audio models (transcription, speech segmentation, speaker diarization, audio event tagging) and small vision/document models (OCR with PP-OCRv6, page orientation, layout, tables, shot splitting, object detection) in the browser, plus optional WebGPU nodes: image understanding (Qwen3.5-0.8B), GLM-OCR, image embeddings (EmbeddingGemma 2) and key-point extraction (LFM2.5-350M). Files never leave the device."
+        "description": "On-device document parsing, PDF page rendering, audio and first/last-frame extraction, video concat / mute / audio merge (Mediabunny + WebCodecs, ffmpeg.wasm for formats the browser cannot read), language detection, knowledge-base chunking and embedding, and audio models (transcription, speech segmentation, speaker diarization, audio event tagging) and small vision/document models (OCR with PP-OCRv6, page orientation, layout, tables, shot splitting, object detection) in the browser, plus optional WebGPU nodes: image understanding (Qwen3.5-0.8B), GLM-OCR, image embeddings (EmbeddingGemma 2) and key-point extraction (LFM2.5-350M). Alternative implementations to pick per node: YOLO26n and RF-DETR nano (objects), PP-DocLayoutV3 (layout), LFM2.5-VL-450M, SmolVLM2 and Florence-2 (image understanding), Chinese-CLIP (image embeddings), PDFium, pdf2md, officeparser and Readability (document parsing). Files never leave the device."
     },
     "runtime": "browser",
     "entry": "dist/index.js",
     "slots": [
-        { "nodeSlot": "parse-document", "method": "parseDocument" },
+        { "nodeSlot": "parse-document", "method": "parseDocument", "models": ["builtin", "pdfium", "pdf2md", "officeparser", "readability"] },
         { "nodeSlot": "render-pages", "method": "renderPages" },
         { "nodeSlot": "extract-audio", "method": "extractAudio", "models": ["mediabunny", "ffmpeg-wasm"] },
         { "nodeSlot": "get-first-frame", "method": "getFirstFrame", "models": ["mediabunny", "ffmpeg-wasm"] },
@@ -18,9 +18,9 @@
         { "nodeSlot": "chunk-text", "method": "chunkText" },
         { "nodeSlot": "embed-text", "method": "embedText", "models": ["bge-small-zh-v1.5", "bge-base-zh-v1.5"] },
         { "nodeSlot": "kb-write", "method": "kbWrite" },
-        { "nodeSlot": "image-gen-text", "method": "imageGenText", "models": ["qwen3.5-0.8b"] },
-        { "nodeSlot": "image-describe", "method": "imageGenText", "models": ["qwen3.5-0.8b"] },
-        { "nodeSlot": "embed-image", "method": "embedImage", "models": ["embeddinggemma-2"] },
+        { "nodeSlot": "image-gen-text", "method": "imageGenText", "models": ["qwen3.5-0.8b", "lfm2.5-vl-450m", "smolvlm2-500m", "florence-2-base"] },
+        { "nodeSlot": "image-describe", "method": "imageGenText", "models": ["qwen3.5-0.8b", "lfm2.5-vl-450m", "smolvlm2-500m", "florence-2-base"] },
+        { "nodeSlot": "embed-image", "method": "embedImage", "models": ["embeddinggemma-2", "chinese-clip-base"] },
         { "nodeSlot": "gen-text", "method": "genText", "models": ["lfm2.5-350m"] },
         { "nodeSlot": "ocr-image", "method": "ocrImage", "models": ["pp-ocrv6-small", "pp-ocrv6-tiny", "glm-ocr"] },
         { "nodeSlot": "transcribe", "method": "transcribe", "models": ["sensevoice-small", "sensevoice-small+ffmpeg-wasm"] },
@@ -28,9 +28,9 @@
         { "nodeSlot": "diarize-speakers", "method": "diarizeSpeakers", "models": ["pyannote-campplus-zh", "pyannote-campplus-zh+ffmpeg-wasm"] },
         { "nodeSlot": "audio-tag", "method": "audioTag", "models": ["ced-tiny", "ced-tiny+ffmpeg-wasm"] },
         { "nodeSlot": "image-orient", "method": "imageOrient", "models": ["pp-lcnet-doc-ori"] },
-        { "nodeSlot": "layout-detect", "method": "layoutDetect", "models": ["pp-doclayout-s", "pp-doclayout-m"] },
+        { "nodeSlot": "layout-detect", "method": "layoutDetect", "models": ["pp-doclayout-s", "pp-doclayout-m", "pp-doclayoutv3"] },
         { "nodeSlot": "table-recognize", "method": "tableRecognize", "models": ["slanet-plus"] },
         { "nodeSlot": "split-video", "method": "splitVideo", "models": ["transnetv2", "transnetv2+ffmpeg-wasm"] },
-        { "nodeSlot": "detect-objects", "method": "detectObjects", "models": ["dfine-nano-fp16", "dfine-nano"] }
+        { "nodeSlot": "detect-objects", "method": "detectObjects", "models": ["dfine-nano-fp16", "dfine-nano", "yolo26n", "rf-detr-nano"] }
     ]
 }

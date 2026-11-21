@@ -12,6 +12,8 @@ const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const noThirdPartyHosts = {
     name: "no-third-party-hosts",
     transform(code: string, id: string) {
+        // @embedpdf/pdfium's default wasm URL (unused: the plugin passes the wasm bytes from dist/assets/pdfium/).
+        if (/[\\/]@embedpdf[\\/]pdfium[\\/]/.test(id)) return code.replace(/https:\/\/cdn\.jsdelivr\.net\/npm\/@embedpdf\/pdfium@[^"'`]*/g, "assets/pdfium/pdfium.wasm");
         if (!/[\\/]@huggingface[\\/]transformers[\\/]/.test(id)) return null;
         return code
             .replaceAll('remoteHost: "https://huggingface.co/"', 'remoteHost: "/models/"')
@@ -74,6 +76,11 @@ export default defineConfig({
         turndown: r("./node_modules/turndown/lib/turndown.browser.es.js"),
         // defuddle's Markdown converter is not in its exports map.
         "defuddle/dist/markdown.js": r("./node_modules/defuddle/dist/markdown.js"),
+        // pdf2md reaches pdf.js through unpdf, which is always given the plugin's pdf.js (src/formats/pdf2md.ts).
+        "unpdf/pdfjs": r("./src/shims/unpdf-pdfjs.ts"),
+        // One unpdf instance: pdf2md `require`s it (the CJS build would be a second copy, which
+        // the plugin's `definePDFJSModule` call would not reach).
+        unpdf: r("./node_modules/unpdf/dist/index.mjs"),
     },
     outputOptions: {
         chunkFileNames: "chunks/[name]-[hash].js",
@@ -99,6 +106,11 @@ export default defineConfig({
                 { name: "xberg", test: /node_modules[\\/]@xberg-io[\\/]/ },
                 { name: "mediabunny", test: /node_modules[\\/]mediabunny[\\/]/ },
                 { name: "eld", test: /node_modules[\\/]eld[\\/]/ },
+                // parse-document alternatives (each loaded only when picked).
+                { name: "pdfium", test: /node_modules[\\/]@embedpdf[\\/]/ },
+                { name: "pdf2md", test: /node_modules[\\/](@opendocsg[\\/]pdf2md|unpdf|enumify)[\\/]/ },
+                { name: "officeparser", test: /node_modules[\\/]officeparser[\\/]/ },
+                { name: "readability", test: /node_modules[\\/]@mozilla[\\/]readability[\\/]/ },
                 // T3 (WebGPU) runtime: transformers.js + onnxruntime-web (one pinned version).
                 { name: "onnxruntime-web", test: /node_modules[\\/](onnxruntime-web|onnxruntime-common)[\\/]/ },
                 { name: "transformers", test: /node_modules[\\/]@huggingface[\\/]transformers[\\/]/ },

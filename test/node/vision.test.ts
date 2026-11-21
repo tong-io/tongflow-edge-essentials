@@ -307,7 +307,7 @@ describe("manifest, models.json and the model catalog agree", () => {
         const t1 = new Set(Object.values(MANIFEST_MODELS).flatMap((m) => m.repos).concat("pp-lcnet-textline-ori"));
         for (const m of models.filter((x) => t1.has(x.id))) {
             expect(m.source).toMatch(/^modelscope:[\w.-]+\/[\w.-]+$/);
-            expect(m.license).toMatch(/Apache-2.0|MIT/);
+            expect(m.license).toMatch(/Apache-2.0|MIT|AGPL-3.0/); // AGPL-3.0: YOLO26n (this plugin is AGPL-3.0 too)
             expect(m.licenseUrl).toMatch(/^https:\/\//);
             expect(m.slots?.length).toBeGreaterThan(0);
             for (const f of m.files) {

@@ -51,6 +51,8 @@ interface ModelVariant {
   dtype: Record<string, Dtype>;
   /** Approximate first-run download in MB. */
   approxMB: number;
+  /** `false`: every graph is one self-contained `.onnx` file (no `.onnx_data` beside it). */
+  external?: boolean;
 }
 interface T3Model {
   /** The id hosts pick in the node's model dropdown (manifest `models`). */

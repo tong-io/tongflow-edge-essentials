@@ -11,7 +11,7 @@ import { readAsset } from "../slots/common.js";
 import { IMAGENET, type Source, crop, decodeImage, drawToRgba, needCanvas, rgbaToChw, rotate, toCanvas, toPng } from "../ml/canvas.js";
 import { fetchModelFile, fetchModelText, memo } from "../ml/model-files.js";
 import { type LoadedSession, createDeviceSession, pickDevice, loadOrt, run, tensor } from "../ml/ort.js";
-import { DOCLAYOUT_LABELS, layoutRegions, regionFilename, regionLabelOf } from "./layout-post.js";
+import { DOCLAYOUT_LABELS, DOCLAYOUT_V3_LABELS, layoutRegions, regionFilename, regionLabelOf } from "./layout-post.js";
 import { ocrModel, ocrText, readingOrder, recognizeText } from "./ocr.js";
 import { yamlList } from "./ocr-post.js";
 import { decodeTable, matchCells, tableDictionary, tableHtml } from "./table-post.js";
@@ -98,8 +98,9 @@ export async function imageOrient(input: SlotInput<"image-orient">, ctx: EdgeCon
 
 /* --------------------------------------------------------------- layout-detect */
 
-export const LAYOUT_MODELS = ["pp-doclayout-s", "pp-doclayout-m"] as const;
-const LAYOUT_SIZE: Record<(typeof LAYOUT_MODELS)[number], number> = { "pp-doclayout-s": 480, "pp-doclayout-m": 640 };
+/** Default first. `pp-doclayoutv3` (130 MB) is the alternative for photographed, skewed or curved pages. */
+export const LAYOUT_MODELS = ["pp-doclayout-s", "pp-doclayout-m", "pp-doclayoutv3"] as const;
+const LAYOUT_SIZE: Record<(typeof LAYOUT_MODELS)[number], number> = { "pp-doclayout-s": 480, "pp-doclayout-m": 640, "pp-doclayoutv3": 800 };
 
 export function layoutModel(model: string | undefined): (typeof LAYOUT_MODELS)[number] {
     if (!model) return LAYOUT_MODELS[0];
@@ -116,9 +117,10 @@ export async function detectLayout(ctx: EdgeContext, src: Source, id: (typeof LA
         session(ctx, id),
         layoutLabels(id, async () => {
             const l = yamlList(await fetchModelText(ctx, id, "inference.yml"), "label_list");
-            return l.length ? l : DOCLAYOUT_LABELS;
+            return l.length ? l : id === "pp-doclayoutv3" ? DOCLAYOUT_V3_LABELS : DOCLAYOUT_LABELS;
         }),
     ]);
+    if (id === "pp-doclayoutv3") return detectLayoutV3(ctx, s, labels, src, threshold);
     const S = LAYOUT_SIZE[id];
     const rgba = drawToRgba(src, S, S);
     const x = rgbaToChw(rgba, S, S, IMAGENET);
@@ -135,11 +137,37 @@ export async function detectLayout(ctx: EdgeContext, src: Source, id: (typeof LA
     return layoutRegions(rows.data as Float32Array, Math.min(count, rows.dims[0]!), labels, src.width, src.height, threshold);
 }
 
+/**
+ * PP-DocLayoutV3 (RT-DETR with mask and reading-order heads, the official ONNX): the page
+ * resized to 800² (no aspect kept) and scaled to 0..1, `im_shape` + `scale_factor` in; rows of
+ * `[class, score, x1, y1, x2, y2, order]` in source pixels out (plus per-box masks, unused:
+ * regions are the boxes, as with S/M). Reading order is the model's own.
+ */
+async function detectLayoutV3(ctx: EdgeContext, s: LoadedSession, labels: string[], src: Source, threshold: number) {
+    const S = LAYOUT_SIZE["pp-doclayoutv3"];
+    const x = rgbaToChw(drawToRgba(src, S, S), S, S, { mean: [0, 0, 0], std: [1, 1, 1] });
+    const ort = await loadOrt(ctx);
+    const out = await run(s, {
+        im_shape: new ort.Tensor("float32", new Float32Array([S, S]), [1, 2]),
+        image: new ort.Tensor("float32", x, [1, 3, S, S]),
+        scale_factor: new ort.Tensor("float32", new Float32Array([S / src.height, S / src.width]), [1, 2]),
+    });
+    const vals = Object.values(out);
+    const rows = vals.find((t) => t.dims.length === 2 && t.dims[1] === 7);
+    if (!rows) throw new EdgeError(`PP-DocLayoutV3: unexpected outputs ${vals.map((t) => `[${t.dims.join(",")}]`).join(" ")}`);
+    const countT = vals.find((t) => t.dims.length === 1);
+    const count = countT ? Number(countT.data[0]) : rows.dims[0]!;
+    return layoutRegions(rows.data as Float32Array, Math.min(count, rows.dims[0]!), labels, src.width, src.height, threshold, {
+        stride: 7,
+        modelOrder: true,
+    });
+}
+
 export async function layoutDetect(input: SlotInput<"layout-detect">, ctx: EdgeContext): Promise<EdgeSlotOutput<"layout-detect">> {
     const id = layoutModel(ctx.model);
     const { bmp, asset } = await readImage(input.image, "layout-detect");
     try {
-        ctx.onProgress({ fraction: 0, message: "loading layout model" });
+        ctx.onProgress({ fraction: 0, message: id === "pp-doclayoutv3" ? "loading PP-DocLayoutV3 (130 MB on first use)" : "loading layout model" });
         const layout = await detectLayout(ctx, bmp, id, num(ctx.params?.threshold, 0.5));
         ctx.onProgress({ fraction: 0.5, message: `${layout.length} regions` });
         const stem = fileStem(asset.filename, "page");

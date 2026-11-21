@@ -3,6 +3,10 @@
  * pipeline, loaded with the plugin's shared transformers.js setup (`ml/transformers.ts`:
  * model files from `<modelBase>onnx-community/dfine_n_coco-ONNX/…`, ort wasm from the
  * plugin's own assets, Cache API, download progress).
+ *
+ * Alternative implementations, picked by the node's model: `yolo26n` (Ultralytics YOLO26n) and
+ * `rf-detr-nano` (RF-DETR nano), both on onnxruntime-web directly (`detect-alt.ts`), with the
+ * same `objects` output.
  */
 import type { EdgeContext } from "../context.js";
 import type { EdgeSlotOutput, SlotInput } from "../types.js";
@@ -19,9 +23,10 @@ import { type Box, iou } from "./geometry.js";
  * default: on WASM it was both faster and more accurate in our runs, while int8 missed obvious
  * objects (the person in astronaut.jpg). The ids stay as they were (`dfine-nano` is int8).
  */
-export const DETECT_MODELS = ["dfine-nano-fp16", "dfine-nano"] as const;
+export const DETECT_MODELS = ["dfine-nano-fp16", "dfine-nano", "yolo26n", "rf-detr-nano"] as const;
 type DetectModel = (typeof DETECT_MODELS)[number];
-const DTYPE: Record<DetectModel, string> = { "dfine-nano": "int8", "dfine-nano-fp16": "fp16" };
+type DfineModel = "dfine-nano-fp16" | "dfine-nano";
+const DTYPE: Record<DfineModel, string> = { "dfine-nano": "int8", "dfine-nano-fp16": "fp16" };
 /** D-FINE nano's sigmoid scores are modest (a clear cat scores ~0.6), so the cut is lower than DETR's usual 0.5. */
 export const DETECT_THRESHOLD = 0.35;
 
@@ -43,7 +48,7 @@ type Detector = (image: unknown, opts: { threshold: number; percentage: boolean 
 const pipelines = memo<Detector>();
 
 /** Object detector, one per (model base, device). */
-async function detector(ctx: EdgeContext, id: DetectModel): Promise<Detector> {
+async function detector(ctx: EdgeContext, id: DfineModel): Promise<Detector> {
     const rt = mlRuntimeOf(ctx);
     const tf = await loadTransformers(rt);
     const device = await pickDevice(ctx);
@@ -87,13 +92,19 @@ export async function detectObjects(input: SlotInput<"detect-objects">, ctx: Edg
     const bmp = await decodeImage(bytes, input.image.mime);
     try {
         const id = detectModel(ctx.model);
+        const t = Number(ctx.params?.threshold);
+        const threshold = Number.isFinite(t) && t > 0 ? t : undefined;
+        if (id === "yolo26n" || id === "rf-detr-nano") {
+            const objects = await (await import("./detect-alt.js")).detectAlt(ctx, id, bmp, threshold);
+            ctx.onProgress({ fraction: 1, message: `${objects.length} objects` });
+            return { success: true, objects: JSON.stringify(objects) };
+        }
         ctx.onProgress({ fraction: 0, message: "loading D-FINE" });
         const det = await detector(ctx, id);
         const tf = await loadTransformers(mlRuntimeOf(ctx));
         const img = new tf.RawImage(drawToRgba(bmp, bmp.width, bmp.height), bmp.width, bmp.height, 4);
         ctx.onProgress({ fraction: 0.5, message: "detecting objects" });
-        const t = Number(ctx.params?.threshold);
-        const found = await det(img, { threshold: Number.isFinite(t) && t > 0 ? t : DETECT_THRESHOLD, percentage: false });
+        const found = await det(img, { threshold: threshold ?? DETECT_THRESHOLD, percentage: false });
         const objects = dedupeObjects(
             found.map((o) => ({
                 label: o.label,

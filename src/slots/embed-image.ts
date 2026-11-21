@@ -7,6 +7,9 @@
  *
  * Advanced param: `dims` (768 default; 512 / 256 / 128 use the model's
  * Matryoshka truncation, renormalized).
+ *
+ * Alternative (the node's model `chinese-clip-base`): Chinese-CLIP ViT-B/16 on WASM, 512-d
+ * vectors in its own space (`embed-image-clip.ts`, loaded only when picked).
  */
 
 import type { EdgeContext } from "../context.js";
@@ -43,10 +46,16 @@ export function parseDims(v: unknown): number {
     throw new EdgeError(`dims must be one of ${EMBED_DIMS.join(", ")}, got ${JSON.stringify(v)}`);
 }
 
+/** Model ids of `embed-image`, default first (as in the manifest). */
+export const EMBED_IMAGE_MODELS = [EMBEDDING_GEMMA_2.id, "chinese-clip-base"] as const;
+
 export async function embedImage(input: SlotInput<"embed-image">, ctx: EdgeContext): Promise<EdgeSlotOutput<"embed-image">> {
+    if (ctx.model === "chinese-clip-base") {
+        return guard(ctx, async () => (await import("./embed-image-clip.js")).embedImageClip(input, ctx));
+    }
     return guard(ctx, async () => {
         const gpu = await requireWebGPU();
-        const model = pickModel(ctx.model, [EMBEDDING_GEMMA_2]);
+        const model = pickModel(ctx.model, [EMBEDDING_GEMMA_2, { id: "chinese-clip-base" }]) as typeof EMBEDDING_GEMMA_2;
         const variant = variantFor(model, gpu.f16);
         const bytes = readAsset(input.image, "image");
         const dims = parseDims(ctx.params?.dims);

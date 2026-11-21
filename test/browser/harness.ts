@@ -73,6 +73,8 @@ const SLOT_OF: Record<string, string> = {
     tableRecognize: "table-recognize",
     splitVideo: "split-video",
     detectObjects: "detect-objects",
+    imageGenText: "image-gen-text",
+    embedImage: "embed-image",
 };
 
 /** Invoke one plugin method over the worker protocol. */
