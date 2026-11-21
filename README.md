@@ -5,10 +5,11 @@
 ## English
 
 Official [TongFlow](https://github.com/tong-io/tongflow) **browser edge plugin**. It parses
-documents, renders PDF pages, pulls audio and first frames out of videos, and detects the
-language of a text. All of it runs inside the user's browser, in a Web Worker, through TongFlow's
-browser engine. Files never leave the device, and no model is downloaded: these are the
-**T0 (zero-model)** nodes.
+documents, renders PDF pages, pulls audio and first frames out of videos, detects the language
+of a text, and chunks and embeds text for an on-device knowledge base. All of it runs inside the
+user's browser, in a Web Worker, through TongFlow's browser engine. Files never leave the device.
+The document, media and language nodes are **T0 (zero-model)**; `embed-text` downloads a 24 MB
+model from the host's model base on first use.
 
 ### Slots
 
@@ -19,6 +20,9 @@ browser engine. Files never leave the device, and no model is downloaded: these 
 | `extract-audio` | `extractAudio` | The primary audio track of a video, **remuxed without re-encoding** when possible: AAC/AC-3 → `.m4a`, Opus/Vorbis → audio-only `.webm`, MP3 → `.mp3`, FLAC → `.flac`, PCM → `.wav`; anything else is transcoded to AAC with WebCodecs. | Mediabunny 1.66.2 |
 | `get-first-frame` | `getFirstFrame` | First decodable video frame as PNG (rotation applied). Browser only (WebCodecs); the codecs are whatever the browser decodes. | Mediabunny 1.66.2 |
 | `detect-language` | `detectLanguage` | Text → ISO 639-1 code (60 languages). Text without letters fails with a clear error. | eld 2.1.1 (`medium` n-grams) |
+| `chunk-text` | `chunkText` | Texts → chunks for the knowledge base (see [Knowledge base](#knowledge-base-chunk-text-embed-text-kb-write)) | own code |
+| `embed-text` | `embedText` | Texts → TFV1 vectors, bge-small-zh-v1.5 (default) or bge-base-zh-v1.5 | transformers.js 4.3.2, onnxruntime-web 1.31.1 |
+| `kb-write` | `kbWrite` | Validates chunks + vectors and summarizes them; the host stores them | own code |
 
 `parse-document` dispatches by MIME type, then file extension, then the leading bytes (so a
 nameless upload still works):
@@ -37,6 +41,155 @@ nameless upload still works):
 | .epub | zip.js 2.25.0 + linkedom: container → OPF → spine XHTML → Markdown | Book title + chapters in spine order |
 | Legacy / long tail: .doc .ppt .rtf .odt .odp .pages .key .numbers .hwp .pst .fb2 .rst .tex .ipynb … | xberg-wasm 1.4.2, **loaded only when such a file arrives** (≈41 MB wasm, ≈17 MB gzip) | Markdown |
 | Archives, images, audio/video, anything unknown | — | `success: false` with a clear error (archives are unpacked by the host; images go to `ocr-image`) |
+
+### Knowledge base: `chunk-text`, `embed-text`, `kb-write`
+
+The three nodes of an ingest pipeline: `text → chunk-text → embed-text → kb-write`, with
+`kb-write` also reading `chunk-text`'s chunks. **The plugin owns no storage**: the knowledge base
+lives in the host (scanall, `@scanall/kb`), which commits what `kb-write` validated.
+
+| Slot | Method | Models (default first) | What it does |
+|---|---|---|---|
+| `chunk-text` | `chunkText` | — | Collected `texts` → `chunks`. The parts are joined with a blank line, then cut into blocks (paragraphs, Markdown tables, fenced code, headings) and packed into chunks of at most `max_chars` (default 500, clamped to 50..8000; UTF-16 units, one per CJK character). A block too long for a chunk is split at sentence ends (`。！？；…` with closing quotes, `! ? ;`, `. ` and line breaks), then hard-cut (preferring `，、：, :` and spaces). Consecutive prose chunks share ≈80 characters (`min(80, max_chars/5)`) of whole sentences; no overlap into or out of a table, code or a new heading. A table that fits is never split (it moves to the next chunk); a longer one is split between rows and every piece repeats the header. A heading never ends a chunk. Empty chunks are dropped; no text at all fails. |
+| `embed-text` | `embedText` | `bge-small-zh-v1.5`, `bge-base-zh-v1.5` | `texts` → `vectors`: one TFV1 file (`vectors.tfv1`), one row per text in input order. q8 ONNX through transformers.js, **CLS pooling + L2 normalization** (what BGE prescribes), no instruction prefix for documents. Batches of 16 (small) / 8 (base), sorted by length to cut padding; progress `embedded i/N` after each batch; cancellation between batches. Model files and the ort wasm are reported through `modelDownload`. |
+| `kb-write` | `kbWrite` | — | Validates `chunks` + `vectors` (TFV1) + `source`: at least one chunk, no empty chunk, a well-formed TFV1, as many vectors as chunks, finite values. Returns `text` = `{"source","chunkCount","dims","vectorsSha256"}` (JSON). Stores nothing. |
+
+`embed-text`'s model is the node's `model` (manifest `models`, chosen on the canvas or swapped with
+`replaceImplementation`); absent means `bge-small-zh-v1.5`. The `<org>/<repo>` is accepted too.
+
+**TFV1** is a verbatim copy of `@scanall/kb/vectors` (`src/kb/tfv1.ts`): `"TFV1"`, u32 dims, u32
+count, then `count × dims` float32, all little-endian. A Node test compares the file and its
+output byte for byte with the scanall package when that checkout is present (`SCANALL_KB_DIR`).
+
+#### Host side of `kb-write` (what scanall implements)
+
+Contract (a): no worker-protocol change. The host wraps its executor with `tapKbWrite` from
+`tongflow-edge-essentials/kb-host` (`dist/kb-host.js`, 0.6 kB, no ML code). The tap keeps a copy of
+the materialized input of every **successful** `kb-write` call (exactly the chunks, TFV1 bytes and
+source that `kb-write` validated) and the model of the run's `embed-text` calls.
+
+```ts
+import { createCompositeExecutor, runWorkflow, OpfsAssetStore } from "tongflow/engine";
+import { createWorkerEdgeExecutor } from "tongflow/engine/browser";
+import { tapKbWrite } from "tongflow-edge-essentials/kb-host";
+import { openKb } from "@scanall/kb";
+
+const edge = createWorkerEdgeExecutor({ registry, resolveModuleUrl /* see "Model hosting" */ });
+const tap = tapKbWrite(createCompositeExecutor({ registry, edge }));      // 1. wrap
+const result = await runWorkflow(ingestWorkflow, { executor: tap.executor, store, signal });
+let payload = null;
+try { payload = tap.take(); } catch (e) { /* 2+ kb-write successes or mixed models: treat as failed */ }
+if (result.status === "success" && payload) {                            // 2. whole run succeeded
+    const tx = kb.beginIngest({ fileName: payload.source, mime: file.type, size: file.size,
+                                embedModel: payload.embedModel });       // e.g. "bge-small-zh-v1.5"
+    tx.add(payload.chunks, payload.vectors);                             // TFV1 bytes as-is
+    await tx.commit();                                                   // 3. atomic replace
+    await kb.storeOriginal(file);
+}                                                                        // otherwise: old KB untouched
+tap.reset();                                                             // before reusing the tap
+```
+
+1. Use `tap.executor` for the run. One tap per run (or `reset()` between runs).
+2. Commit **only** when `result.status === "success"` (not `partial`, `failed` or `cancelled`) and
+   `take()` returned a payload. `take()` is `null` when no `kb-write` succeeded and throws when
+   several did or the run used several embedding models; in all those cases keep the old KB.
+3. `beginIngest` → `add(payload.chunks, payload.vectors)` → `commit()`. `@scanall/kb` checks counts
+   and dims again; a rejected commit leaves the old KB in place. Use `payload.source` as the file
+   name and `payload.embedModel` as `embedModel` (absent when the vectors did not come from an
+   `embed-text` node of this run). `payload.summary` is `kb-write`'s JSON; `payload.dims` its dims.
+4. Show `kb-write`'s `text` (or the commit's `KbInfo`) as the node result; errors of `kb-write`
+   (e.g. "3 chunks but 2 vectors") already fail the node with a readable message.
+
+A host that cannot wrap the executor can read the same data from the run instead: the `kb-write`
+node's `chunks` binding points at `chunk-text`'s `chunks` output (`result.outputs[id].chunks`), its
+`vectors` binding at `embed-text`'s `vectors` (`{file_key}` → `store.get(file_key)`), and
+`source` is a `config` binding. Check the bytes against `vectorsSha256` before committing.
+
+#### Query embedding for the host: `embedQuery`
+
+`tongflow-edge-essentials/embed-query` (`dist/embed-query.js`, 0.65 kB; the ML code loads on first
+use from the same `dist/chunks/`) embeds a search query with **the same model, file, pooling and
+normalization** as `embed-text`, and prefixes the BGE query instruction
+`为这个句子生成表示以用于检索相关文章：` (documents never get it; `instruction: ""` turns it off).
+
+```ts
+import { createQueryEmbedder } from "tongflow-edge-essentials/embed-query";
+const q = createQueryEmbedder({ model: kb.current()?.embedModel });     // default bge-small-zh-v1.5
+await q.warmup();                                                        // optional
+const hits = await kb.search(text, await q.embed(text), { k: 20 });
+```
+
+Options: `model`, `modelBase` (default as below), `pluginBase` (where `dist/` is served; default
+next to the module), `instruction`, `onDownload`. `embedQuery(text, options)` is the one-shot form.
+It is a separate entry rather than a worker method because the host calls it outside a workflow
+run, in its own code. **Run it in the host's own Web Worker** (an inference blocks its thread for
+≈40 ms); on the main thread it also works. Served from the same origin, it shares the Cache API
+entries with the plugin's worker, so the model is downloaded once. Its vectors match the worker's
+to cosine ≈ 0.996 (q8 is dynamically quantized per call, so a vector varies slightly with its batch).
+
+#### Model hosting (model base)
+
+Model files are fetched only from the **model base**, laid out `<modelBase><org>/<repo>/<path>`
+exactly like the ModelScope / Hugging Face repos (so they can be mirrored 1:1; `models.json` lists
+the files). Resolution order: `ctx.modelBase` (if the engine ever passes one) →
+`globalThis.__TONGFLOW_EDGE_CONFIG__.modelBase` → same-origin `/models/`. The worker executor
+creates the worker itself, so a host sets the base **as a query parameter of the entry URL**:
+
+```ts
+createWorkerEdgeExecutor({
+    registry,
+    resolveModuleUrl: (_id, p) => `/plugins/${p.localSubdir}/${p.entryFile}?modelBase=${encodeURIComponent("https://oss.example.cn/models/")}`,
+});
+```
+
+The entry copies it into `globalThis.__TONGFLOW_EDGE_CONFIG__` inside the worker (a value already
+set there wins). In-process use sets `globalThis.__TONGFLOW_EDGE_CONFIG__ = { modelBase }` before the
+first call; `embedQuery` takes `modelBase` as an option. Cross-origin bases need CORS
+(`Access-Control-Allow-Origin`), and should answer `Range` requests: transformers.js probes file
+sizes with `Range: bytes=0-0` and would otherwise download each file twice.
+
+- transformers.js runs with `allowLocalModels = false`, `remoteHost = modelBase`,
+  `remotePathTemplate = "{model}/"`; it caches model files in the Cache API (`transformers-cache`).
+- onnxruntime-web's wasm (`ort-wasm-simd-threaded.asyncify.wasm`, 28.7 MB, 7.1 MB gzip) is served
+  from `dist/assets/ort/`, fetched once with progress and cached in the Cache API
+  (`tongflow-edge-assets`). Nothing is fetched from jsDelivr or huggingface.co.
+- **Serve the page cross-origin isolated** (`Cross-Origin-Opener-Policy: same-origin`,
+  `Cross-Origin-Embedder-Policy: require-corp`) if you can: onnxruntime-web then uses threads,
+  ≈2.6× faster (see below). Without isolation it runs single-threaded.
+
+#### Runtime and measured speed
+
+transformers.js **4.3.2** on onnxruntime-web **1.31.1** (pinned for every ML node; transformers.js
+4.3.2 itself asks for `1.31.0-dev.20260914`, an npm `overrides` entry forces 1.31.1), WASM EP.
+Measured in headless Chromium (Playwright, Apple Silicon), model served locally from
+`EDGE_MODELS_DIR`, `npm run test:browser`:
+
+| bge-small-zh-v1.5 q8 | single-threaded | cross-origin isolated (threads) |
+|---|---|---|
+| Cold: ort wasm + model (24 MB) load, init, 3 short texts | 1.2 s | 1.5 s |
+| 64 short texts (≈30 chars) | 2.7 s | 1.3 s |
+| 16 chunks of ≈480 chars (default chunk size) | 11–18 s (≈0.7–1.2 s/chunk; two runs, the slower one on a loaded machine) | 4.2 s (≈260 ms/chunk) |
+| `embedQuery` warm-up / one query | 0.75 s / 42 ms | 0.32 s / 43 ms |
+| Whole ingest run (chunk → embed → kb-write), 3 chunks, warm cache | 0.78 s | 0.60 s |
+
+A long document is dominated by embedding (≈4–20 minutes per 1000 default-size chunks); a smaller
+`max_chars` is faster per character (attention grows with length). bge-base-zh-v1.5 is ≈4× the
+compute of bge-small.
+
+### Model manifest
+
+`models.json` (repo root, also exported as `tongflow-edge-essentials/models.json`) lists every model
+the plugin can download: `[{id, source: "modelscope:<org>/<repo>", files, approxMB, license,
+attribution?}]`. The weights-hosting job mirrors exactly those files under the model base.
+
+| id | Source | Files | Size | License |
+|---|---|---|---|---|
+| `bge-small-zh-v1.5` (default of `embed-text`) | `modelscope:Xenova/bge-small-zh-v1.5` | `config.json`, `tokenizer.json`, `tokenizer_config.json`, `onnx/model_quantized.onnx` | 24 MB | MIT (BAAI; ONNX by Xenova) |
+| `bge-base-zh-v1.5` | `modelscope:Xenova/bge-base-zh-v1.5` | same | 103 MB (98.1 MiB, within the 100 MiB per-file cap) | MIT (BAAI; ONNX by Xenova) |
+
+Attribution: bge-*-zh-v1.5 by BAAI ([FlagEmbedding](https://github.com/FlagOpen/FlagEmbedding)),
+MIT License. The Xenova conversions carry no license field and follow upstream; ship BAAI's MIT
+notice with the weights.
 
 ### Using it from the engine
 
@@ -61,12 +214,12 @@ names are the `method` values in `tongflow.plugin.json`.
 
 ### Bundle
 
-Every library is a lazy dynamic import, so the entry is 9 kB and each format loads only what it
+Every library is a lazy dynamic import, so the entry is 12 kB and each format loads only what it
 needs. Gzip transfer on first use, chunks included:
 
 | First use of | Loads (gzip) |
 |---|---|
-| any slot | `index.js` 3.7 kB |
+| any slot | `index.js` 4.9 kB |
 | PDF text / render | pdf.js + its in-thread worker ≈ 495 kB (+ CMaps on demand, ≤ 1.6 MB raw total) |
 | .docx | mammoth, xmldom, defuddle, linkedom ≈ 496 kB |
 | .xlsx/.xls/.ods | SheetJS + code pages ≈ 326 kB |
@@ -78,6 +231,9 @@ needs. Gzip transfer on first use, chunks included:
 | legacy formats | xberg glue 91 kB + wasm ≈ 17.3 MB (41 MB raw) |
 | extract-audio / get-first-frame | Mediabunny ≈ 192 kB |
 | detect-language | eld medium ≈ 558 kB |
+| chunk-text / kb-write | 1.8 kB / 0.9 kB |
+| embed-text (and `embedQuery`) | transformers.js 123 kB + onnxruntime-web 42 kB + glue 3 kB, ort wasm 7.1 MB (28.7 MB raw), + the model (24 MB, or 103 MB for bge-base) |
+| `dist/kb-host.js` / `dist/embed-query.js` (host entries) | 0.6 kB / 0.65 kB |
 
 `dist/` is committed: the scanner requires the manifest's `entry` to exist, and hosts load the
 plugin straight from a clone. Rebuild it after any source change.
@@ -99,6 +255,16 @@ Node covers pdf.js (legacy build), docx, xlsx/xls/ods, csv, pptx, eml, msg, html
 the xberg legacy formats, `extract-audio` (remux needs no WebCodecs) and `detect-language`.
 `render-pages` and `get-first-frame` need a browser and run in the browser project. Run
 `npx playwright install chromium` once.
+
+**Real-model tests** (`test/browser/kb-models.test.ts`) never download anything. They run only when
+`EDGE_MODELS_DIR` points at a local model base (`<dir>/Xenova/bge-small-zh-v1.5/…`), which vitest
+serves at `/models/` (with `Range` support); otherwise they skip with that message. `EDGE_COI=1`
+serves the test page cross-origin isolated (threaded onnxruntime-web). Timings land in
+`test-results/kb-timings.json`.
+
+```bash
+EDGE_MODELS_DIR=../.models-cache npm run test:browser   # files from modelscope.cn/models/<org>/<repo>/resolve/master/<path>
+```
 
 **The `tongflow` dependency** is a `file:` link to a TongFlow checkout at
 `../../tongflow/packages/tongflow` (that is, `tongflow` cloned next to the directory holding this
@@ -122,6 +288,13 @@ bundled; the ABI types are type-only.
 - **msgreader** imports `iconv-lite`, which needs Node's `Buffer`; a `TextDecoder` shim replaces
   it in the bundle.
 - `parse-document` does not open attachments of e-mails; it lists them.
+- **Alternative implementations** are a manifest `models` list on one slot entry
+  (`embed-text`: `["bge-small-zh-v1.5", "bge-base-zh-v1.5"]`, default first), and the method picks
+  by `ctx.model`. The scanner rejects a `nodeSlot` declared twice, so separate entries per
+  implementation are not possible.
+- transformers.js and onnxruntime-web contain their libraries' default hosts (huggingface.co,
+  jsDelivr) as strings; both are overridden before any file is fetched, and a test asserts every
+  model request goes to the model base.
 
 ### Licenses
 
@@ -146,6 +319,8 @@ and none is GPL-only.
 | @xberg-io/xberg-wasm | 1.4.2 | MIT | |
 | **mediabunny** | 1.66.2 | **MPL-2.0** | ⚠️ File-level copyleft. It is bundled unmodified, and its source is on npm and GitHub. Changes to its files would have to be published under MPL-2.0. |
 | eld | 2.1.1 | Apache-2.0 | |
+| @huggingface/transformers (transformers.js) | 4.3.2 | Apache-2.0 | Plus @huggingface/jinja, @huggingface/tokenizers (Apache-2.0) |
+| onnxruntime-web | 1.31.1 | MIT | Microsoft; the wasm ships in `dist/assets/ort/` |
 | tongflow (engine/worker) | 1.0.0 (monorepo) | AGPL-3.0 | First-party; `defineEdgePlugin` and `edgeMethod` |
 
 Avoided on purpose: MuPDF.js and scribe.js (AGPL-3.0), the ffmpeg.wasm core (GPL-2.0+) and the
@@ -158,8 +333,8 @@ Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (
 ## 中文
 
 [TongFlow](https://github.com/tong-io/tongflow) 官方**浏览器端边缘插件**。它在用户浏览器的 Web Worker 里,通过 TongFlow
-浏览器引擎完成以下工作:解析文档、把 PDF 渲染成页面图、从视频中抽取音轨和首帧、识别文本语种。文件不出设备,也不下载任何模型,即
-**T0(零模型)** 节点。
+浏览器引擎完成以下工作:解析文档、把 PDF 渲染成页面图、从视频中抽取音轨和首帧、识别文本语种,以及为端侧知识库切块和计算向量。
+文件不出设备。文档、音视频、语种节点是 **T0(零模型)** 节点;`embed-text` 首次使用时从宿主的 model base 下载 24 MB 模型。
 
 ### 实现的 slot
 
@@ -170,6 +345,9 @@ Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (
 | `extract-audio` | `extractAudio` | 抽取视频的主音轨,能不重编码就直接转封装:AAC/AC-3 转 `.m4a`,Opus/Vorbis 转纯音频 `.webm`,MP3 转 `.mp3`,FLAC 转 `.flac`,PCM 转 `.wav`。其它编码用 WebCodecs 转成 AAC | Mediabunny 1.66.2 |
 | `get-first-frame` | `getFirstFrame` | 视频第一帧可解码画面,输出 PNG(已按旋转信息校正)。仅限浏览器(WebCodecs),能解哪些编码取决于浏览器 | Mediabunny 1.66.2 |
 | `detect-language` | `detectLanguage` | 输出文本的 ISO 639-1 语种代码,支持 60 种语言。没有字母的文本会明确报错 | eld 2.1.1(medium 词典) |
+| `chunk-text` | `chunkText` | 文本切成知识库片段(见下方「知识库节点」) | 自写 |
+| `embed-text` | `embedText` | 文本转 TFV1 向量,默认 bge-small-zh-v1.5,可换 bge-base-zh-v1.5 | transformers.js 4.3.2、onnxruntime-web 1.31.1 |
+| `kb-write` | `kbWrite` | 校验并汇总片段和向量,由宿主存储 | 自写 |
 
 `parse-document` 按以下顺序判断格式:先看 MIME,再看扩展名,最后看文件头字节。没有文件名的上传也能识别。
 
@@ -188,6 +366,89 @@ Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (
 | 老格式和长尾格式:.doc .ppt .rtf .odt .odp .pages .key .numbers .hwp .pst .fb2 .rst .tex .ipynb 等 | xberg-wasm 1.4.2,**遇到这类文件才加载**(wasm 约 41 MB,gzip 后约 17 MB) | Markdown |
 | 压缩包、图片、音视频、无法识别的格式 | — | `success: false` 并给出明确原因(压缩包由宿主在上传时解开;图片请走 `ocr-image`) |
 
+### 知识库节点:`chunk-text`、`embed-text`、`kb-write`
+
+入库流水线为 `文本 → chunk-text → embed-text → kb-write`,`kb-write` 同时读取 `chunk-text` 的片段。**插件本身不持有任何存储**:
+知识库在宿主里(scanall 的 `@scanall/kb`),由宿主把 `kb-write` 校验过的数据写进去。
+
+| Slot | 方法 | 模型(默认在前) | 作用 |
+|---|---|---|---|
+| `chunk-text` | `chunkText` | — | 收集到的 `texts` 输出 `chunks`。各部分以空行拼接,先分成块(段落、Markdown 表格、代码块、标题),再装进不超过 `max_chars` 的片段(默认 500,限制在 50..8000;按 UTF-16 计,一个汉字算 1)。单块放不下时按句末切(`。！？；…` 及后随引号、`! ? ;`、`. `、换行),仍放不下再硬切(优先在 `，、：, :` 和空格处)。相邻正文片段重叠约 80 字(`min(80, max_chars/5)`),取完整句子;表格、代码、新标题前后不加重叠。放得下的表格不拆(整体移到下一片段),超长表格按行拆,每段重复表头。标题不会落在片段末尾。空片段丢弃;完全没有文本时报错。 |
+| `embed-text` | `embedText` | `bge-small-zh-v1.5`、`bge-base-zh-v1.5` | `texts` 输出 `vectors`:一个 TFV1 文件(`vectors.tfv1`),按输入顺序每条一行。transformers.js 加载 q8 ONNX,**CLS 池化 + L2 归一化**(BGE 的规定做法),文档不加指令前缀。small 每批 16 条、base 每批 8 条,按长度排序以减少补齐;每批后上报 `embedded i/N`;批间检查取消。模型文件和 ort wasm 的下载经 `modelDownload` 上报。 |
+| `kb-write` | `kbWrite` | — | 校验 `chunks` + `vectors`(TFV1)+ `source`:至少一个片段、没有空片段、TFV1 格式正确、向量数等于片段数、数值有限。输出 `text` = `{"source","chunkCount","dims","vectorsSha256"}`(JSON)。不存储任何东西。 |
+
+`embed-text` 用节点的 `model`(manifest 的 `models`,在画布上选择或用 `replaceImplementation` 切换);不设即 `bge-small-zh-v1.5`,
+也接受 `<org>/<repo>` 写法。
+
+**TFV1** 原样复制自 `@scanall/kb/vectors`(`src/kb/tfv1.ts`)。本机有 scanall 仓库时(或设 `SCANALL_KB_DIR`),Node 测试会逐字节比对
+源文件和打包结果。
+
+#### `kb-write` 的宿主侧步骤(scanall 前端照此实现)
+
+采用方案 (a),不改 worker 协议。宿主用 `tongflow-edge-essentials/kb-host`(`dist/kb-host.js`,0.6 kB,不含 ML 代码)里的
+`tapKbWrite` 包一层 executor。它会记下每次**成功**的 `kb-write` 调用拿到的输入(正是 `kb-write` 校验过的片段、TFV1 字节和来源),
+以及本次运行里 `embed-text` 用的模型。代码见英文部分,步骤如下:
+
+1. 本次运行用 `tap.executor`。一个 tap 对应一次运行,复用前调用 `reset()`。
+2. **只有** `result.status === "success"`(不是 `partial`、`failed`、`cancelled`)且 `take()` 返回了数据时才提交。没有成功的
+   `kb-write` 时 `take()` 返回 `null`;有多个成功的 `kb-write`、或混用了多个嵌入模型时 `take()` 抛错。以上情况一律保留旧库。
+3. `beginIngest` → `add(payload.chunks, payload.vectors)` → `commit()`。`@scanall/kb` 会再查一遍数量和维度,提交失败则旧库原样保留。
+   文件名用 `payload.source`,`embedModel` 用 `payload.embedModel`(向量不是本次运行的 `embed-text` 产出时为空)。
+4. 节点结果显示 `kb-write` 的 `text`(或提交后的 `KbInfo`)。`kb-write` 的错误(如「3 chunks but 2 vectors」)本身就会让节点失败并给出原因。
+
+不方便包 executor 的宿主,也可以从运行结果里取同样的数据:`kb-write` 的 `chunks` 绑定指向 `chunk-text` 的 `chunks` 输出
+(`result.outputs[id].chunks`),`vectors` 绑定指向 `embed-text` 的 `vectors`(`{file_key}` → `store.get(file_key)`),`source` 是
+`config` 绑定。提交前用 `vectorsSha256` 核对字节。
+
+#### 宿主的查询向量:`embedQuery`
+
+`tongflow-edge-essentials/embed-query`(`dist/embed-query.js`,0.65 kB;ML 代码首次使用时从同一个 `dist/chunks/` 加载)用与
+`embed-text` **相同的模型、文件、池化和归一化**计算查询向量,并加上 BGE 查询指令 `为这个句子生成表示以用于检索相关文章：`(文档从不加;
+`instruction: ""` 可关闭)。选项:`model`、`modelBase`、`pluginBase`、`instruction`、`onDownload`;一次性调用用 `embedQuery(text, options)`。
+
+做成单独入口而不是 worker 方法,是因为宿主在工作流运行之外、在自己的代码里调用它。**建议放在宿主自己的 Web Worker 里**(一次推理会占住
+所在线程约 40 ms),主线程也能用。同源部署时它与插件 worker 共用 Cache API,模型只下载一次。它算出的向量与 worker 的余弦约 0.996
+(q8 是逐次动态量化,同一文本在不同批次里结果略有差别)。
+
+#### 模型托管(model base)
+
+模型文件只从 **model base** 下载,目录为 `<modelBase><org>/<repo>/<path>`,与 ModelScope / Hugging Face 仓库一致,可 1:1 镜像
+(文件清单见 `models.json`)。取值顺序:`ctx.modelBase`(若引擎将来提供)→ `globalThis.__TONGFLOW_EDGE_CONFIG__.modelBase` → 同源
+`/models/`。worker 由引擎的 executor 创建,宿主无法预先注入代码,所以**用入口 URL 的查询参数设置**:
+`resolveModuleUrl` 返回 `…/dist/index.js?modelBase=<URL 编码的地址>`。入口会把它写进 worker 内的 `__TONGFLOW_EDGE_CONFIG__`
+(已有值优先)。进程内使用时在首次调用前设置 `globalThis.__TONGFLOW_EDGE_CONFIG__ = { modelBase }`;`embedQuery` 通过选项传入。
+
+- 跨域的 model base 需要 CORS,并且应支持 `Range` 请求:transformers.js 用 `Range: bytes=0-0` 探测文件大小,不支持时每个文件会下载两遍。
+- transformers.js 设为 `allowLocalModels = false`、`remoteHost = modelBase`、`remotePathTemplate = "{model}/"`,模型文件缓存在
+  Cache API(`transformers-cache`)。
+- onnxruntime-web 的 wasm(`ort-wasm-simd-threaded.asyncify.wasm`,28.7 MB,gzip 7.1 MB)放在 `dist/assets/ort/`,带进度下载一次后缓存在
+  Cache API(`tongflow-edge-assets`)。不访问 jsDelivr 或 huggingface.co。
+- **页面尽量开启跨源隔离**(`Cross-Origin-Opener-Policy: same-origin`、`Cross-Origin-Embedder-Policy: require-corp`):这样
+  onnxruntime-web 能用多线程,约快 2.6 倍;否则单线程运行。
+
+#### 运行时与实测速度
+
+transformers.js **4.3.2** + onnxruntime-web **1.31.1**(所有 ML 节点共用这一个版本;transformers.js 4.3.2 自己依赖
+`1.31.0-dev.20260914`,用 npm `overrides` 统一成 1.31.1),WASM 执行。headless Chromium(Playwright,Apple Silicon)实测,
+模型从本地 `EDGE_MODELS_DIR` 提供:
+
+- 冷启动(ort wasm + 24 MB 模型加载、初始化、3 条短文本):单线程 1.2 s;
+- 16 个约 480 字的片段(默认片段大小):单线程 11–18 s(每片约 0.7–1.2 s,两次测量,慢的一次机器负载较高),跨源隔离多线程 4.2 s(每片约 260 ms);
+- `embedQuery` 预热 0.75 s,单次查询 42 ms。
+
+完整表格见英文部分。长文档的耗时主要在向量化(每 1000 个默认大小片段约 4–20 分钟)。
+
+### 模型清单
+
+`models.json`(仓库根目录,也以 `tongflow-edge-essentials/models.json` 导出)列出插件可能下载的全部模型:
+`[{id, source: "modelscope:<org>/<repo>", files, approxMB, license, attribution?}]`,权重托管任务按它同步。
+
+- `bge-small-zh-v1.5`(`embed-text` 默认):`modelscope:Xenova/bge-small-zh-v1.5`,24 MB,MIT;
+- `bge-base-zh-v1.5`:`modelscope:Xenova/bge-base-zh-v1.5`,103 MB(98.1 MiB,未超过单文件 100 MiB 上限),MIT。
+
+署名:bge-*-zh-v1.5 由 BAAI 发布([FlagEmbedding](https://github.com/FlagOpen/FlagEmbedding)),MIT 许可;Xenova 的 ONNX 转换件
+未标许可,跟随上游。随权重附上 BAAI 的 MIT 声明。
+
 ### 与引擎对接
 
 入口 `dist/index.js` 的默认导出是 `defineEdgePlugin({ methods })`,来自 `tongflow/engine/worker`。在专用 module worker 里加载时,它按
@@ -204,7 +465,7 @@ Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (
 
 ### 包体
 
-所有库都是懒加载的动态 import:入口只有 9 kB,每种格式只加载自己需要的部分。首次使用时的 gzip 传输量(含依赖的 chunk)见上方英文表格。
+所有库都是懒加载的动态 import:入口只有 12 kB,每种格式只加载自己需要的部分。首次使用时的 gzip 传输量(含依赖的 chunk)见上方英文表格。
 主要数字:
 
 - PDF 约 495 kB;
@@ -216,6 +477,8 @@ Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (
 - epub 约 514 kB;
 - 音视频约 192 kB;
 - 语种识别约 558 kB;
+- 向量化:transformers.js 123 kB + onnxruntime-web 42 kB,ort wasm gzip 7.1 MB(原始 28.7 MB),另加模型 24 MB(bge-base 为 103 MB);
+- 切块 1.8 kB,kb-write 0.9 kB,宿主入口 `kb-host.js` / `embed-query.js` 各约 0.6 kB;
 - 老格式 91 kB,另加 wasm 约 17.3 MB。
 
 `dist/` 会提交进仓库:scanner 要求 manifest 的 `entry` 文件存在,宿主也是克隆仓库后直接加载。改动源码后要重新构建。
@@ -247,6 +510,9 @@ npm run fixtures       # 重新生成 test/fixtures(需要 LibreOffice、ffmpeg�
 - **turndown** 的浏览器版用 `window.DOMParser` 解析 HTML 字符串,worker 里没有这个对象。插件先用 linkedom 解析,再把元素交给 turndown。
 - **msgreader** 依赖的 `iconv-lite` 需要 Node 的 `Buffer`,打包时换成了基于 `TextDecoder` 的垫片。
 - 邮件附件只列出清单,不展开解析。
+- **换实现**用同一个 slot 条目里的 `models` 列表表达(`embed-text`:`["bge-small-zh-v1.5", "bge-base-zh-v1.5"]`,默认在前),方法按
+  `ctx.model` 选择。scanner 不允许同一个 `nodeSlot` 声明两次,所以无法每个实现各写一条。
+- **真模型测试**(`test/browser/kb-models.test.ts`)不会联网下载:只有设置 `EDGE_MODELS_DIR` 指向本地 model base 时才运行,否则跳过并给出说明。
 
 ### 许可证
 
