@@ -93,6 +93,18 @@ export declare const methods: {
   vadSegment: import("tongflow/engine/worker").EdgeMethod<"vad-segment">;
   diarizeSpeakers: import("tongflow/engine/worker").EdgeMethod<"diarize-speakers">;
   audioTag: import("tongflow/engine/worker").EdgeMethod<"audio-tag">;
+  ocrImage: (input: {
+    image: {
+      filename?: string | undefined;
+      mime?: string | undefined;
+      bytesBase64: string;
+    };
+  }, ctx: EdgeMethodContext) => unknown;
+  imageOrient: import("tongflow/engine/worker").EdgeMethod<"image-orient">;
+  layoutDetect: import("tongflow/engine/worker").EdgeMethod<"layout-detect">;
+  tableRecognize: import("tongflow/engine/worker").EdgeMethod<"table-recognize">;
+  splitVideo: import("tongflow/engine/worker").EdgeMethod<"split-video">;
+  detectObjects: import("tongflow/engine/worker").EdgeMethod<"detect-objects">;
 };
 /** Slot → method name, mirroring the manifest (kept in sync by a test). */
 export declare const slots: {
@@ -108,11 +120,16 @@ export declare const slots: {
   readonly "image-describe": "imageGenText";
   readonly "embed-image": "embedImage";
   readonly "gen-text": "genText";
-  readonly "ocr-image": "ocrImageGlm";
+  readonly "ocr-image": "ocrImage";
   readonly transcribe: "transcribe";
   readonly "vad-segment": "vadSegment";
   readonly "diarize-speakers": "diarizeSpeakers";
   readonly "audio-tag": "audioTag";
+  readonly "image-orient": "imageOrient";
+  readonly "layout-detect": "layoutDetect";
+  readonly "table-recognize": "tableRecognize";
+  readonly "split-video": "splitVideo";
+  readonly "detect-objects": "detectObjects";
 };
 /** The slot implementations against the internal context (for hosts and tests that bring their own). */
 export declare const impls: {
@@ -120,6 +137,12 @@ export declare const impls: {
   vadSegment: SlotImpl<"vad-segment">;
   diarizeSpeakers: SlotImpl<"diarize-speakers">;
   audioTag: SlotImpl<"audio-tag">;
+  ocrImage: SlotImpl<"ocr-image">;
+  imageOrient: SlotImpl<"image-orient">;
+  layoutDetect: SlotImpl<"layout-detect">;
+  tableRecognize: SlotImpl<"table-recognize">;
+  splitVideo: SlotImpl<"split-video">;
+  detectObjects: SlotImpl<"detect-objects">;
   imageGenText: (input: VisionTextInput, ctx: EdgeContext) => Promise<EdgeSlotOutput<"image-gen-text">>;
   ocrImageGlm: (input: SlotInput<"ocr-image">, ctx: EdgeContext) => Promise<EdgeSlotOutput<"ocr-image">>;
   embedImage: (input: SlotInput<"embed-image">, ctx: EdgeContext) => Promise<EdgeSlotOutput<"embed-image">>;
@@ -151,6 +174,18 @@ declare const _default: {
     vadSegment: import("tongflow/engine/worker").EdgeMethod<"vad-segment">;
     diarizeSpeakers: import("tongflow/engine/worker").EdgeMethod<"diarize-speakers">;
     audioTag: import("tongflow/engine/worker").EdgeMethod<"audio-tag">;
+    ocrImage: (input: {
+      image: {
+        filename?: string | undefined;
+        mime?: string | undefined;
+        bytesBase64: string;
+      };
+    }, ctx: EdgeMethodContext) => unknown;
+    imageOrient: import("tongflow/engine/worker").EdgeMethod<"image-orient">;
+    layoutDetect: import("tongflow/engine/worker").EdgeMethod<"layout-detect">;
+    tableRecognize: import("tongflow/engine/worker").EdgeMethod<"table-recognize">;
+    splitVideo: import("tongflow/engine/worker").EdgeMethod<"split-video">;
+    detectObjects: import("tongflow/engine/worker").EdgeMethod<"detect-objects">;
   };
 };
 export { type Asset, DEFAULT_EMBED_MODEL, EMBED_MODELS, type EdgeConfig, type EdgeContext, type EdgeSlotOutput, type KbWriteSummary, type NodeSlot, type SlotImpl, type SlotInput, type SlotOutput, _default as default, toEdgeContext };
