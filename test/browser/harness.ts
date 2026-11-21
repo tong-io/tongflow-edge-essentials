@@ -63,6 +63,12 @@ const SLOT_OF: Record<string, string> = {
     vadSegment: "vad-segment",
     diarizeSpeakers: "diarize-speakers",
     audioTag: "audio-tag",
+    ocrImage: "ocr-image",
+    imageOrient: "image-orient",
+    layoutDetect: "layout-detect",
+    tableRecognize: "table-recognize",
+    splitVideo: "split-video",
+    detectObjects: "detect-objects",
 };
 
 /** Invoke one plugin method over the worker protocol. */
