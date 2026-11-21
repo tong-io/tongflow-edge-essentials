@@ -1,0 +1,1 @@
+import{n as e}from"./rolldown-runtime-BB8GkNNy.js";e((()=>{throw Error(`unpdf's bundled pdf.js is not shipped: call definePDFJSModule with the plugin's pdf.js first`)}))();
