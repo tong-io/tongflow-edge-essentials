@@ -1,31 +1,5 @@
 [
     {
-        "id": "bge-small-zh-v1.5",
-        "source": "modelscope:Xenova/bge-small-zh-v1.5",
-        "files": [
-            "config.json",
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "onnx/model_quantized.onnx"
-        ],
-        "approxMB": 24,
-        "license": "MIT",
-        "attribution": "bge-small-zh-v1.5 by BAAI (FlagEmbedding, https://github.com/FlagOpen/FlagEmbedding), MIT License; ONNX conversion by Xenova"
-    },
-    {
-        "id": "bge-base-zh-v1.5",
-        "source": "modelscope:Xenova/bge-base-zh-v1.5",
-        "files": [
-            "config.json",
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "onnx/model_quantized.onnx"
-        ],
-        "approxMB": 103,
-        "license": "MIT",
-        "attribution": "bge-base-zh-v1.5 by BAAI (FlagEmbedding, https://github.com/FlagOpen/FlagEmbedding), MIT License; ONNX conversion by Xenova"
-    },
-    {
         "id": "qwen3.5-0.8b",
         "source": "modelscope:onnx-community/Qwen3.5-0.8B-ONNX",
         "files": [
@@ -80,30 +54,6 @@
         "approxMB": 660,
         "license": "MIT",
         "attribution": "GLM-OCR by Zhipu AI (Z.ai)"
-    },
-    {
-        "id": "embeddinggemma-2",
-        "source": "modelscope:onnx-community/embeddinggemma-2-ONNX",
-        "files": [
-            "config.json",
-            "config_sentence_transformers.json",
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "chat_template.jinja",
-            "preprocessor_config.json",
-            "processor_config.json",
-            "onnx/model_q4f16.onnx",
-            "onnx/model_q4f16.onnx_data",
-            "onnx/vision_encoder_q4f16.onnx",
-            "onnx/vision_encoder_q4f16.onnx_data",
-            "onnx/model_q4.onnx",
-            "onnx/model_q4.onnx_data",
-            "onnx/vision_encoder_q4.onnx",
-            "onnx/vision_encoder_q4.onnx_data"
-        ],
-        "approxMB": 290,
-        "license": "Apache-2.0 (Gemma 4 license); deployments must follow the Gemma Prohibited Use Policy",
-        "attribution": "EmbeddingGemma 2 by Google DeepMind"
     },
     {
         "id": "lfm2.5-350m",
@@ -1099,37 +1049,6 @@
         "notes": "The q4f16 merged decoder of this export does not load in onnxruntime-web 1.31.1 (invalid If-subgraph output), so every GPU uses the q4 graphs (int8 token embeddings)."
     },
     {
-        "id": "chinese-clip-base",
-        "source": "modelscope:Xenova/chinese-clip-vit-base-patch16",
-        "files": [
-            "config.json",
-            "preprocessor_config.json",
-            "onnx/model_quantized.onnx"
-        ],
-        "checksums": {
-            "config.json": {
-                "size": 844,
-                "sha256": "19447ad8c20d274f0644a6663af56286be98bd2d0e5f9472fcb318e04fcd6961"
-            },
-            "preprocessor_config.json": {
-                "size": 546,
-                "sha256": "61a78fdd2c7ac17b54b6190c0f4cb23423192c535003d52528d01e318a47608b"
-            },
-            "onnx/model_quantized.onnx": {
-                "size": 190842404,
-                "sha256": "a2c2849329eafb24100acec5a9421a39f8cb445296444c5c98855b69e5e7a751"
-            }
-        },
-        "slots": [
-            "embed-image"
-        ],
-        "approxMB": 190.8,
-        "license": "MIT",
-        "licenseUrl": "https://github.com/OFA-Sys/Chinese-CLIP/blob/master/LICENSE",
-        "attribution": "Chinese-CLIP ViT-B/16 by OFA-Sys (Alibaba DAMO Academy, https://github.com/OFA-Sys/Chinese-CLIP), MIT License; ONNX conversion (joint text + vision graph, int8) by Xenova",
-        "notes": "The Xenova repo has no license field and follows upstream (OFA-Sys/chinese-clip-vit-base-patch16: MIT)."
-    },
-    {
         "id": "whisper-large-v3-turbo",
         "source": "modelscope:onnx-community/whisper-large-v3-turbo",
         "files": [
@@ -1368,87 +1287,5 @@
         "licenseUrl": "licenses/OpenMDW-1.1.txt",
         "attribution": "Nemotron-3-Diarization by NVIDIA, licensed under the OpenMDW License Agreement v1.1 (copy in licenses/OpenMDW-1.1.txt); ONNX conversion and q4 quantization by onnx-community (modified: converted to ONNX and quantized).",
         "notes": "OpenMDW-1.1: redistribution must retain a copy of the agreement and the notices of origin; host licenses/OpenMDW-1.1.txt next to the weights and list it on the about/third-party page. q4 (83 MB) runs on the wasm EP; the 73 MB q4f16 needs WebGPU and is not used."
-    },
-    {
-        "id": "harrier-oss-v1-270m",
-        "source": "modelscope:onnx-community/harrier-oss-v1-270m-ONNX",
-        "files": [
-            "config.json",
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "onnx/model_q4.onnx",
-            "onnx/model_q4.onnx_data"
-        ],
-        "checksums": {
-            "config.json": {
-                "size": 1608,
-                "sha256": "5366f9919a82aaeceb6707bf218c5769f414d60f5dbaf781fa07e5465487fd7c"
-            },
-            "tokenizer.json": {
-                "size": 20323311,
-                "sha256": "ec95be298bea26f90370854faa650744c9fb0a04ca5e5ff95dd3913393ac5e45"
-            },
-            "tokenizer_config.json": {
-                "size": 702,
-                "sha256": "135405f3479eaebc473e2e78593f2195c7598948a215ee748758def426b30f59"
-            },
-            "onnx/model_q4.onnx": {
-                "size": 239762,
-                "sha256": "228dca2603b907d673dd99cf89c309c0ca68baeed127416a5e027a48e62b0f49"
-            },
-            "onnx/model_q4.onnx_data": {
-                "size": 205492736,
-                "sha256": "b5a15487360f5341659480ae4b5ad60028d5f865bd329196ec8d5708bbed3118"
-            }
-        },
-        "slots": [
-            "embed-text"
-        ],
-        "approxMB": 226.1,
-        "license": "MIT",
-        "licenseUrl": "https://www.modelscope.cn/models/onnx-community/harrier-oss-v1-270m-ONNX",
-        "attribution": "harrier-oss-v1-270m by Microsoft (MIT License); ONNX conversion and q4 quantization by onnx-community (modified: converted to ONNX and quantized).",
-        "notes": "WebGPU only: the quantized exports use GatherBlockQuantized for the embedding table, which onnxruntime-web's wasm build lacks. Queries take the instruction prefix (HARRIER_QUERY_INSTRUCTION)."
-    },
-    {
-        "id": "granite-embedding-97m-multilingual-r2",
-        "source": "modelscope:onnx-community/granite-embedding-97m-multilingual-r2-ONNX",
-        "files": [
-            "config.json",
-            "tokenizer.json",
-            "tokenizer_config.json",
-            "special_tokens_map.json",
-            "onnx/model_quantized.onnx"
-        ],
-        "checksums": {
-            "config.json": {
-                "size": 1215,
-                "sha256": "ae74d55a56f779774cb9a8e63d3c2da9ae1af83c00229ffdff43d0b38407a0ee"
-            },
-            "tokenizer.json": {
-                "size": 25301671,
-                "sha256": "51947676cae1f991fa51c6b9a24e14ee5460e5f0b9f692f13bb3159829d1592a"
-            },
-            "tokenizer_config.json": {
-                "size": 12860,
-                "sha256": "6ed69389e30a8ecabfce2f9ebcdf0c908b34056f24d994340f2f216521c057d5"
-            },
-            "special_tokens_map.json": {
-                "size": 871,
-                "sha256": "013787ee251ff611722479197c00853b62113ad303cb0a36524231783c676c69"
-            },
-            "onnx/model_quantized.onnx": {
-                "size": 97858099,
-                "sha256": "704c1ebca5fbb7cd83ced41827658ac4c9990c64f7f2874d22b78044e5022e22"
-            }
-        },
-        "slots": [
-            "embed-text"
-        ],
-        "approxMB": 123.2,
-        "license": "Apache-2.0",
-        "licenseUrl": "https://www.apache.org/licenses/LICENSE-2.0",
-        "attribution": "granite-embedding-97m-multilingual-r2 by the IBM Granite Embedding Team (Apache-2.0); ONNX conversion and int8 quantization by onnx-community (modified: converted to ONNX and quantized).",
-        "notes": "CPU (wasm EP), CLS pooling, no query prefix."
     }
 ]

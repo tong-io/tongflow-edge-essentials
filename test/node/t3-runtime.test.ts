@@ -28,7 +28,7 @@ vi.mock("@huggingface/transformers", () => {
 });
 
 import type { EdgeContext } from "../../src/context.js";
-import { LFM25_350M, QWEN35_VL, GLM_OCR, EMBEDDING_GEMMA_2 } from "../../src/ml/catalog.js";
+import { LFM25_350M, QWEN35_VL, GLM_OCR } from "../../src/ml/catalog.js";
 import { generateText } from "../../src/ml/generate.js";
 import { MAX_RESIDENT, disposeAll, loadRuntime, withModel } from "../../src/ml/runtime.js";
 import { WEBGPU_MISSING } from "../../src/ml/webgpu.js";
@@ -168,7 +168,7 @@ describe("withModel", () => {
             load: async () => ({ value: m.id, dispose: () => disposed.push(m.id) }),
         });
         await withModel(ctx(), spec(LFM25_350M), async (v) => v);
-        await withModel(ctx(), spec(EMBEDDING_GEMMA_2), async (v) => v);
+        await withModel(ctx(), spec(QWEN35_VL), async (v) => v);
         expect(disposed).toEqual([]);
         await withModel(ctx(), spec(GLM_OCR), async (v) => v);
         expect(disposed).toEqual(["lfm2.5-350m"]);
@@ -248,7 +248,6 @@ describe("T3 slots without WebGPU (Node has no navigator.gpu)", () => {
     it.each([
         ["imageGenText", { text: "描述", image }],
         ["ocrImageGlm", { image }],
-        ["embedImage", { image }],
         ["genText", { text: "合同金额 100 万元。" }],
     ] as const)("%s fails clearly", async (name, input) => {
         const out = await (impls as Record<string, (i: unknown, c: EdgeContext) => Promise<{ success: boolean; error?: string }>>)[name]!(input, ctx());

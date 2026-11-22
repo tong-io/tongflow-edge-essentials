@@ -1,6 +1,6 @@
 /**
- * tongflow-edge-essentials: browser edge nodes (T0 zero-model nodes, knowledge-base nodes,
- * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, EmbeddingGemma 2, LFM2.5-350M; and the T2 audio nodes:
+ * tongflow-edge-essentials: browser edge nodes (T0 zero-model nodes,
+ * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, LFM2.5-350M; and the T2 audio nodes:
  * SenseVoiceSmall or X-ASR zh-en, Silero VAD, pyannote + CAM++, CED-tiny, with the alternatives Whisper large-v3-turbo,
  * Cohere Transcribe, Qwen3-ASR-0.6B, Zipformer-CTC and Nemotron-3-Diarization picked by the node's model;
  * and the media nodes on Mediabunny + WebCodecs with ffmpeg.wasm as fallback / selectable implementation).
@@ -13,12 +13,9 @@
  */
 import { defineEdgePlugin, edgeMethod, type EdgeMethodContext } from "tongflow/engine/worker";
 import { type EdgeContext, toEdgeContext } from "./context.js";
-import { chunkText } from "./slots/chunk-text.js";
 import { audioTag, diarizeSpeakers, transcribe, transcribeTimestamp, vadSegment } from "./slots/audio.js";
 import { detectLanguage } from "./slots/detect-language.js";
-import { embedText } from "./slots/embed-text.js";
 import type { VisionTextInput } from "./slots/image-gen-text.js";
-import { kbWrite } from "./slots/kb-write.js";
 import { concatVideos, extractAudio, getFirstFrame, getLastFrame, mergeVideoAudio, removeVideoAudio } from "./slots/media.js";
 import { parseDocument } from "./slots/parse-document.js";
 import { renderPages } from "./slots/render-pages.js";
@@ -29,9 +26,7 @@ import { applyEntryConfig, type EdgeConfig } from "./util/model-base.js";
 export type { EdgeContext } from "./context.js";
 export { toEdgeContext } from "./context.js";
 export type { Asset, EdgeSlotOutput, NodeSlot, SlotImpl, SlotInput, SlotOutput } from "./types.js";
-export type { KbWriteSummary } from "./slots/kb-write.js";
 export type { EdgeConfig } from "./util/model-base.js";
-export { DEFAULT_EMBED_MODEL, EMBED_MODELS } from "./ml/models.js";
 
 // `dist/index.js?modelBase=…`: the host's way to configure the plugin inside the worker.
 applyEntryConfig(import.meta.url);
@@ -74,8 +69,6 @@ const t3 = {
         import("./slots/image-gen-text.js").then((m) => m.imageGenText(input, ctx)),
     ocrImageGlm: (input: SlotInput<"ocr-image">, ctx: EdgeContext): Promise<EdgeSlotOutput<"ocr-image">> =>
         import("./slots/ocr-image-glm.js").then((m) => m.ocrImageGlm(input, ctx)),
-    embedImage: (input: SlotInput<"embed-image">, ctx: EdgeContext): Promise<EdgeSlotOutput<"embed-image">> =>
-        import("./slots/embed-image.js").then((m) => m.embedImage(input, ctx)),
     genText: (input: SlotInput<"gen-text">, ctx: EdgeContext): Promise<EdgeSlotOutput<"gen-text">> =>
         import("./slots/gen-text.js").then((m) => m.genText(input, ctx)),
 };
@@ -109,13 +102,9 @@ export const methods = {
     removeVideoAudio: bind("remove-video-audio", removeVideoAudio),
     mergeVideoAudio: bind("merge-video-audio", mergeVideoAudio),
     detectLanguage: bind("detect-language", detectLanguage),
-    chunkText: bind("chunk-text", chunkText),
-    embedText: bind("embed-text", embedText),
-    kbWrite: bind("kb-write", kbWrite),
     // T3, WebGPU only.
     imageGenText: bindAny(t3.imageGenText),
     ocrImageGlm: bind("ocr-image", t3.ocrImageGlm),
-    embedImage: bind("embed-image", t3.embedImage),
     genText: bind("gen-text", t3.genText),
     transcribe: bind("transcribe", transcribe),
     transcribeTimestamp: bind("transcribe-timestamp", transcribeTimestamp),
@@ -142,12 +131,8 @@ export const slots = {
     "remove-video-audio": "removeVideoAudio",
     "merge-video-audio": "mergeVideoAudio",
     "detect-language": "detectLanguage",
-    "chunk-text": "chunkText",
-    "embed-text": "embedText",
-    "kb-write": "kbWrite",
     "image-gen-text": "imageGenText",
     "image-describe": "imageGenText",
-    "embed-image": "embedImage",
     "gen-text": "genText",
     "ocr-image": "ocrImage",
     transcribe: "transcribe",
@@ -173,9 +158,6 @@ export const impls = {
     removeVideoAudio,
     mergeVideoAudio,
     detectLanguage,
-    chunkText,
-    embedText,
-    kbWrite,
     ...t3,
     transcribe,
     transcribeTimestamp,

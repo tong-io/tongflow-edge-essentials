@@ -1,6 +1,6 @@
 // Pure logic of the alternative audio/text implementations (issue 30, part B): byte-BPE,
 // CTC text, NeMo / Whisper log-mel, the Sortformer speaker cache, segment post-processing,
-// Qwen3-ASR prompt/decoding helpers, language hints, the embedding model table, and the models.json / manifest / registry agreement.
+// Qwen3-ASR prompt/decoding helpers, language hints, and the models.json / manifest / registry agreement.
 //
 // Golden numbers come from Python (numpy) ports of the same reference code (transformers'
 // NemotronAsrStreamingFeatureExtractor / Nemotron3DiarizationSpeakerCache, HF's
@@ -27,8 +27,6 @@ import {
 } from "../../src/audio/qwen3-asr.js";
 import { ctcTokensToText, timedUnits } from "../../src/audio/zipformer-ctc.js";
 import { hostedFiles } from "../../src/ml/catalog.js";
-import { normalizeRowsL2 } from "../../src/ml/bge.js";
-import { BGE_QUERY_INSTRUCTION, EMBED_MODELS, HARRIER_QUERY_INSTRUCTION, resolveEmbedModel } from "../../src/ml/models.js";
 import { ALT_MODELS, COHERE_TRANSCRIBE, WHISPER_TURBO } from "../../src/models/alt-registry.js";
 
 const root = new URL("../../", import.meta.url);
@@ -266,24 +264,6 @@ describe("language hints", () => {
     });
 });
 
-describe("embedding models (embed-text and the host's createQueryEmbedder)", () => {
-    it("per-model pooling, device and query instruction; aliases", () => {
-        expect(resolveEmbedModel("bge-small-zh-v1.5").queryInstruction).toBe(BGE_QUERY_INSTRUCTION);
-        const h = resolveEmbedModel("harrier-oss-v1-270m");
-        expect(h).toMatchObject({ dims: 640, pooling: "model", device: "webgpu", dtype: "q4", queryInstruction: HARRIER_QUERY_INSTRUCTION });
-        expect(HARRIER_QUERY_INSTRUCTION).toBe("Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ");
-        const g = resolveEmbedModel("granite-embedding-97m-r2");
-        expect(g).toMatchObject({ id: "granite-embedding-97m-multilingual-r2", dims: 384, pooling: "cls", device: "wasm", dtype: "q8", queryInstruction: "" });
-        expect(resolveEmbedModel("onnx-community/harrier-oss-v1-270m-ONNX").id).toBe("harrier-oss-v1-270m");
-        expect(Object.keys(EMBED_MODELS)).toHaveLength(4);
-    });
-
-    it("L2-normalizes rows", () => {
-        const d = normalizeRowsL2(Float32Array.of(3, 4, 0, 0), 2);
-        expect(Array.from(d).map((x) => Math.round(x * 1e6) / 1e6)).toEqual([0.6, 0.8, 0, 0]);
-    });
-});
-
 describe("manifest, models.json and the alternative registry agree", () => {
     const models = JSON.parse(readFileSync(new URL("models.json", root), "utf8")) as {
         id: string;
@@ -321,12 +301,10 @@ describe("manifest, models.json and the alternative registry agree", () => {
         const models = (slot: string) => manifest.slots.find((s) => s.nodeSlot === slot)!.models!;
         expect(models("transcribe")[0]).toBe("sensevoice-small");
         expect(models("diarize-speakers")[0]).toBe("pyannote-campplus-zh");
-        expect(models("embed-text").slice(0, 2)).toEqual(["bge-small-zh-v1.5", "bge-base-zh-v1.5"]);
         for (const id of ALT_TRANSCRIBE_MODELS) expect(models("transcribe")).toEqual(expect.arrayContaining([id, `${id}+ffmpeg-wasm`]));
         for (const id of ALT_TIMESTAMP_MODELS) expect(models("transcribe-timestamp")).toEqual(expect.arrayContaining([id, `${id}+ffmpeg-wasm`]));
         for (const id of ALT_DIARIZE_MODELS) expect(models("diarize-speakers")).toEqual(expect.arrayContaining([id, `${id}+ffmpeg-wasm`]));
         expect(models("transcribe-timestamp")).not.toContain("qwen3-asr-0.6b"); // no times from the model
-        expect(models("embed-text")).toEqual(expect.arrayContaining(["harrier-oss-v1-270m", "granite-embedding-97m-multilingual-r2"]));
         for (const slot of ["transcribe", "transcribe-timestamp", "diarize-speakers"] as const) expect(SLOT_MODELS[slot]).toEqual(models(slot));
     });
 });

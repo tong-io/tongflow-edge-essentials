@@ -60,9 +60,6 @@ const SLOT_OF: Record<string, string> = {
     removeVideoAudio: "remove-video-audio",
     mergeVideoAudio: "merge-video-audio",
     detectLanguage: "detect-language",
-    chunkText: "chunk-text",
-    embedText: "embed-text",
-    kbWrite: "kb-write",
     transcribe: "transcribe",
     transcribeTimestamp: "transcribe-timestamp",
     vadSegment: "vad-segment",
@@ -75,7 +72,6 @@ const SLOT_OF: Record<string, string> = {
     splitVideo: "split-video",
     detectObjects: "detect-objects",
     imageGenText: "image-gen-text",
-    embedImage: "embed-image",
 };
 
 /** Invoke one plugin method over the worker protocol. */

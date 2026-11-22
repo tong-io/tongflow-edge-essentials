@@ -7,12 +7,21 @@
 Official [TongFlow](https://github.com/tong-io/tongflow) **browser edge plugin**. It parses
 documents, renders PDF pages, pulls audio and first/last frames out of videos, joins, mutes and
 re-dubs videos (with ffmpeg.wasm for formats the browser cannot read), detects the language
-of a text, and chunks and embeds text for an on-device knowledge base. All of it runs inside the
+of a text, and runs small audio, vision and document models. All of it runs inside the
 user's browser, in a Web Worker, through TongFlow's browser engine. Files never leave the device.
-The document, media and language nodes are **T0 (zero-model)**; `embed-text` downloads a 24 MB
-model from the host's model base on first use. Optional **T3 (WebGPU)** nodes add image
-understanding, GLM-OCR, image embeddings and key-point extraction with 250–850 MB models; see
+The document, media and language nodes are **T0 (zero-model)**; the model-backed nodes download
+their weights from the host's model base on first use. Optional **T3 (WebGPU)** nodes add image
+understanding, GLM-OCR and key-point extraction with 250–850 MB models; see
 [T3 WebGPU nodes](#t3-webgpu-nodes).
+
+**0.2.0: Removed knowledge-base slots (moved to host applications).** `chunk-text`, `embed-text`,
+`embed-image` and `kb-write`, the host entries `tongflow-edge-essentials/kb-host` and
+`tongflow-edge-essentials/embed-query`, and the models only they used (bge-small/base-zh-v1.5,
+harrier-oss-v1-270m, granite-embedding-97m-multilingual-r2, EmbeddingGemma 2, Chinese-CLIP) are
+gone. Chunking, embedding and storing are application steps: a host that builds a knowledge base
+collects the text a workflow parsed and chunks, embeds and stores it itself. The manifest is valid
+against TongFlow ABIs with and without those slots. The removed code stays in git history
+(commits `25dd826`, `7a918d1`, `48f611a`, `9b152df`).
 
 ### Slots
 
@@ -27,10 +36,7 @@ understanding, GLM-OCR, image embeddings and key-point extraction with 250–850
 | `remove-video-audio` | `removeVideoAudio` | The video stream copied into a silent MP4 (`-an -vcodec copy`; H.264 only when the codec cannot go into MP4). | same |
 | `merge-video-audio` | `mergeVideoAudio` | `video`'s video stream copied + `audio`'s audio as AAC → MP4, cut to the shorter one (`-shortest`). | same |
 | `detect-language` | `detectLanguage` | Text → ISO 639-1 code (60 languages). Never fails on content: text too short for eld (「谢谢，辛苦了。」) is decided by its script (`zh` when Han ideographs are at least half the letters, `ja` with kana, `ko` for Hangul); empty or letter-free text is `und`. | eld 2.1.1 (`medium` n-grams) |
-| `chunk-text` | `chunkText` | Texts → chunks for the knowledge base (see [Knowledge base](#knowledge-base-chunk-text-embed-text-kb-write)) | own code |
-| `embed-text` | `embedText` | Texts → TFV1 vectors, bge-small-zh-v1.5 (default), bge-base-zh-v1.5, granite-embedding-97m-multilingual-r2, or harrier-oss-v1-270m (WebGPU) | transformers.js 4.3.2, onnxruntime-web 1.31.1 |
-| `kb-write` | `kbWrite` | Validates chunks + vectors and summarizes them; the host stores them | own code |
-| `transcribe` | `transcribe` | Audio → Chinese-first `text` with punctuation (SenseVoiceSmall; X-ASR zh-en as model `x-asr-zh-en`; Qwen3-ASR-0.6B, Zipformer-CTC and, on WebGPU, Whisper large-v3-turbo and Cohere Transcribe as [alternatives](#alternative-audio-and-text-implementations)) | onnxruntime-web 1.31.1, see [T2 audio nodes](#t2-audio-nodes) |
+| `transcribe` | `transcribe` | Audio → Chinese-first `text` with punctuation (SenseVoiceSmall; X-ASR zh-en as model `x-asr-zh-en`; Qwen3-ASR-0.6B, Zipformer-CTC and, on WebGPU, Whisper large-v3-turbo and Cohere Transcribe as [alternatives](#alternative-audio-implementations)) | onnxruntime-web 1.31.1, see [T2 audio nodes](#t2-audio-nodes) |
 | `transcribe-timestamp` | `transcribeTimestamp` | Audio → `text` + sentence-level `time_stamps` `[{start, end, text}]` in seconds (SenseVoiceSmall; X-ASR as `x-asr-zh-en`; also Zipformer-CTC and Whisper) | same |
 | `vad-segment` | `vadSegment` | Audio → speech segments as WAV `segments` (Silero VAD) | same |
 | `diarize-speakers` | `diarizeSpeakers` | Audio → `segments` JSON `[{speaker,start,end}]` (pyannote + CAM++; alternative Nemotron-3-Diarization) | same |
@@ -60,96 +66,7 @@ nameless upload still works):
 | Legacy / long tail: .doc .ppt .rtf .odt .odp .pages .key .numbers .hwp .pst .fb2 .rst .tex .ipynb … | xberg-wasm 1.4.2, **loaded only when such a file arrives** (≈41 MB wasm, ≈17 MB gzip) | Markdown |
 | Archives, images, audio/video, anything unknown | — | `success: false` with a clear error (archives are unpacked by the host; images go to `ocr-image`) |
 
-### Knowledge base: `chunk-text`, `embed-text`, `kb-write`
-
-The three nodes of an ingest pipeline: `text → chunk-text → embed-text → kb-write`, with
-`kb-write` also reading `chunk-text`'s chunks. **The plugin owns no storage**: the knowledge base
-lives in the host (scanall, `@scanall/kb`), which commits what `kb-write` validated.
-
-| Slot | Method | Models (default first) | What it does |
-|---|---|---|---|
-| `chunk-text` | `chunkText` | — | Collected `texts` → `chunks`. The parts are joined with a blank line, then cut into blocks (paragraphs, Markdown tables, fenced code, headings) and packed into chunks of at most `max_chars` (default 500, clamped to 50..8000; UTF-16 units, one per CJK character). A block too long for a chunk is split at sentence ends (`。！？；…` with closing quotes, `! ? ;`, `. ` and line breaks), then hard-cut (preferring `，、：, :` and spaces). Consecutive prose chunks share ≈80 characters (`min(80, max_chars/5)`) of whole sentences; no overlap into or out of a table, code or a new heading. A table that fits is never split (it moves to the next chunk); a longer one is split between rows and every piece repeats the header. A heading never ends a chunk. Empty chunks are dropped; no text at all fails. |
-| `embed-text` | `embedText` | `bge-small-zh-v1.5`, `bge-base-zh-v1.5`, `harrier-oss-v1-270m`, `granite-embedding-97m-multilingual-r2` | `texts` → `vectors`: one TFV1 file (`vectors.tfv1`), one row per text in input order. q8 ONNX through transformers.js, **CLS pooling + L2 normalization** (what BGE prescribes), no instruction prefix for documents. The alternatives ([below](#alternative-audio-and-text-implementations)): granite r2 (384 dims, int8, CLS pooling, wasm) and harrier (640 dims, q4, last-token pooling inside the graph, **WebGPU only**). Batches of 16 (small) / 8 (base), sorted by length to cut padding; progress `embedded i/N` after each batch; cancellation between batches. Model files and the ort wasm are reported through `modelDownload`. |
-| `kb-write` | `kbWrite` | — | Validates `chunks` + `vectors` (TFV1) + `source`: at least one chunk, no empty chunk, a well-formed TFV1, as many vectors as chunks, finite values. Returns `text` = `{"source","chunkCount","dims","vectorsSha256"}` (JSON). Stores nothing. |
-
-`embed-text`'s model is the node's `model` (manifest `models`, chosen on the canvas or swapped with
-`replaceImplementation`); absent means `bge-small-zh-v1.5`. The `<org>/<repo>` is accepted too, and
-`granite-embedding-97m-r2` / `harrier-270m` as short names.
-
-**TFV1** is a verbatim copy of `@scanall/kb/vectors` (`src/kb/tfv1.ts`): `"TFV1"`, u32 dims, u32
-count, then `count × dims` float32, all little-endian. A Node test compares the file and its
-output byte for byte with the scanall package when that checkout is present (`SCANALL_KB_DIR`).
-
-#### Host side of `kb-write` (what scanall implements)
-
-Contract (a): no worker-protocol change. The host wraps its executor with `tapKbWrite` from
-`tongflow-edge-essentials/kb-host` (`dist/kb-host.js`, 0.6 kB, no ML code). The tap keeps a copy of
-the materialized input of every **successful** `kb-write` call (exactly the chunks, TFV1 bytes and
-source that `kb-write` validated) and the model of the run's `embed-text` calls.
-
-```ts
-import { createCompositeExecutor, runWorkflow, OpfsAssetStore } from "tongflow/engine";
-import { createWorkerEdgeExecutor } from "tongflow/engine/browser";
-import { tapKbWrite } from "tongflow-edge-essentials/kb-host";
-import { openKb } from "@scanall/kb";
-
-const edge = createWorkerEdgeExecutor({ registry, resolveModuleUrl /* see "Model hosting" */ });
-const tap = tapKbWrite(createCompositeExecutor({ registry, edge }));      // 1. wrap
-const result = await runWorkflow(ingestWorkflow, { executor: tap.executor, store, signal });
-let payload = null;
-try { payload = tap.take(); } catch (e) { /* 2+ kb-write successes or mixed models: treat as failed */ }
-if (result.status === "success" && payload) {                            // 2. whole run succeeded
-    const tx = kb.beginIngest({ fileName: payload.source, mime: file.type, size: file.size,
-                                embedModel: payload.embedModel });       // e.g. "bge-small-zh-v1.5"
-    tx.add(payload.chunks, payload.vectors);                             // TFV1 bytes as-is
-    await tx.commit();                                                   // 3. atomic replace
-    await kb.storeOriginal(file);
-}                                                                        // otherwise: old KB untouched
-tap.reset();                                                             // before reusing the tap
-```
-
-1. Use `tap.executor` for the run. One tap per run (or `reset()` between runs).
-2. Commit **only** when `result.status === "success"` (not `partial`, `failed` or `cancelled`) and
-   `take()` returned a payload. `take()` is `null` when no `kb-write` succeeded and throws when
-   several did or the run used several embedding models; in all those cases keep the old KB.
-3. `beginIngest` → `add(payload.chunks, payload.vectors)` → `commit()`. `@scanall/kb` checks counts
-   and dims again; a rejected commit leaves the old KB in place. Use `payload.source` as the file
-   name and `payload.embedModel` as `embedModel` (absent when the vectors did not come from an
-   `embed-text` node of this run). `payload.summary` is `kb-write`'s JSON; `payload.dims` its dims.
-4. Show `kb-write`'s `text` (or the commit's `KbInfo`) as the node result; errors of `kb-write`
-   (e.g. "3 chunks but 2 vectors") already fail the node with a readable message.
-
-A host that cannot wrap the executor can read the same data from the run instead: the `kb-write`
-node's `chunks` binding points at `chunk-text`'s `chunks` output (`result.outputs[id].chunks`), its
-`vectors` binding at `embed-text`'s `vectors` (`{file_key}` → `store.get(file_key)`), and
-`source` is a `config` binding. Check the bytes against `vectorsSha256` before committing.
-
-#### Query embedding for the host: `embedQuery`
-
-`tongflow-edge-essentials/embed-query` (`dist/embed-query.js`, 0.65 kB; the ML code loads on first
-use from the same `dist/chunks/`) embeds a search query with **the same model, file, pooling and
-normalization** as `embed-text`, and prefixes **that model's** query instruction (documents never
-get it; `instruction: ""` turns it off): BGE's `为这个句子生成表示以用于检索相关文章：`, harrier's
-`Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: `
-(`HARRIER_QUERY_INSTRUCTION`), none for granite. Pass the KB's recorded `embedModel` as `model`;
-harrier needs WebGPU on the page or worker that runs the query embedder too.
-
-```ts
-import { createQueryEmbedder } from "tongflow-edge-essentials/embed-query";
-const q = createQueryEmbedder({ model: kb.current()?.embedModel });     // default bge-small-zh-v1.5
-await q.warmup();                                                        // optional
-const hits = await kb.search(text, await q.embed(text), { k: 20 });
-```
-
-Options: `model`, `modelBase` (default as below), `pluginBase` (where `dist/` is served; default
-next to the module), `instruction`, `onDownload`. `embedQuery(text, options)` is the one-shot form.
-It is a separate entry rather than a worker method because the host calls it outside a workflow
-run, in its own code. **Run it in the host's own Web Worker** (an inference blocks its thread for
-≈40 ms); on the main thread it also works. Served from the same origin, it shares the Cache API
-entries with the plugin's worker, so the model is downloaded once. Its vectors match the worker's
-to cosine ≈ 0.996 (q8 is dynamically quantized per call, so a vector varies slightly with its batch).
-
-#### Model hosting (model base)
+### Model hosting (model base)
 
 Model files are fetched only from the **model base**, laid out `<modelBase><org>/<repo>/<path>`
 exactly like the ModelScope / Hugging Face repos (so they can be mirrored 1:1; `models.json` lists
@@ -166,7 +83,7 @@ createWorkerEdgeExecutor({
 
 The entry copies it into `globalThis.__TONGFLOW_EDGE_CONFIG__` inside the worker (a value already
 set there wins). In-process use sets `globalThis.__TONGFLOW_EDGE_CONFIG__ = { modelBase }` before the
-first call; `embedQuery` takes `modelBase` as an option. Cross-origin bases need CORS
+first call. Cross-origin bases need CORS
 (`Access-Control-Allow-Origin`), and should answer `Range` requests: transformers.js probes file
 sizes with `Range: bytes=0-0` and would otherwise download each file twice.
 
@@ -187,28 +104,15 @@ sizes with `Range: bytes=0-0` and would otherwise download each file twice.
   `unpoisonedOrtChains`; the build fails if the pattern is not found after an upgrade).
 - **Serve the page cross-origin isolated** (`Cross-Origin-Opener-Policy: same-origin`,
   `Cross-Origin-Embedder-Policy: require-corp`) if you can: onnxruntime-web then uses threads,
-  ≈2.6× faster (see below). Without isolation it runs single-threaded.
+  which is several times faster on the WASM EP. Without isolation it runs single-threaded.
 
-#### Runtime and measured speed
+### ML runtime
 
 transformers.js **4.3.2** on onnxruntime-web **1.31.1** (pinned for every ML node; transformers.js
-4.3.2 itself asks for `1.31.0-dev.20260914`, an npm `overrides` entry forces 1.31.1), WASM EP.
-Measured in headless Chromium (Playwright, Apple Silicon), model served locally from
-`EDGE_MODELS_DIR`, `npm run test:browser`:
+4.3.2 itself asks for `1.31.0-dev.20260914`, an npm `overrides` entry forces 1.31.1), WASM EP, or
+WebGPU for the T3 nodes. Speeds per node are in each section below.
 
-| bge-small-zh-v1.5 q8 | single-threaded | cross-origin isolated (threads) |
-|---|---|---|
-| Cold: ort wasm + model (24 MB) load, init, 3 short texts | 1.2 s | 1.5 s |
-| 64 short texts (≈30 chars) | 2.7 s | 1.3 s |
-| 16 chunks of ≈480 chars (default chunk size) | 11–18 s (≈0.7–1.2 s/chunk; two runs, the slower one on a loaded machine) | 4.2 s (≈260 ms/chunk) |
-| `embedQuery` warm-up / one query | 0.75 s / 42 ms | 0.32 s / 43 ms |
-| Whole ingest run (chunk → embed → kb-write), 3 chunks, warm cache | 0.78 s | 0.60 s |
-
-A long document is dominated by embedding (≈4–20 minutes per 1000 default-size chunks); a smaller
-`max_chars` is faster per character (attention grows with length). bge-base-zh-v1.5 is ≈4× the
-compute of bge-small.
-
-#### MuPDF.js (model `mupdf`)
+### MuPDF.js (model `mupdf`)
 
 `parse-document` takes `mupdf` as one more alternative in its list (`builtin` stays the default; MuPDF
 reads PDFs only, other formats go to the built-in parser) and `render-pages` takes
@@ -256,15 +160,6 @@ The T1 vision entries use the same format (`upstream` describes how each communi
 checked); their table is in [T1 vision/document nodes](#t1-visiondocument-nodes). `qwen3.5-0.8b-text` also
 carries `checksums`: T3 files with a checksum are verified (size + SHA-256, while transformers.js streams
 them) before they are cached.
-
-| id | Source | Files | Size | License |
-|---|---|---|---|---|
-| `bge-small-zh-v1.5` (default of `embed-text`) | `modelscope:Xenova/bge-small-zh-v1.5` | `config.json`, `tokenizer.json`, `tokenizer_config.json`, `onnx/model_quantized.onnx` | 24 MB | MIT (BAAI; ONNX by Xenova) |
-| `bge-base-zh-v1.5` | `modelscope:Xenova/bge-base-zh-v1.5` | same | 103 MB (98.1 MiB, within the 100 MiB per-file cap) | MIT (BAAI; ONNX by Xenova) |
-
-Attribution: bge-*-zh-v1.5 by BAAI ([FlagEmbedding](https://github.com/FlagOpen/FlagEmbedding)),
-MIT License. The Xenova conversions carry no license field and follow upstream; ship BAAI's MIT
-notice with the weights.
 
 ### Using it from the engine
 
@@ -424,14 +319,12 @@ storage quota.
 | `image-gen-text` | `imageGenText` | `qwen3.5-0.8b` (alternatives `lfm2.5-vl-450m`, `smolvlm2-500m`, `florence-2-base`, [below](#alternative-implementations-vision-and-documents)) | What the canvas `imageGenTextNode` runs. `text` (prompt, may be blank) + optional `image`; honours `system`, `max_new_tokens` (192), `enable_thinking` (off), `temperature` (0.7, 0 = greedy), `top_p` (0.8), `top_k` (20). Without a prompt it describes the image **in 1–3 Simplified Chinese sentences**, only what is visible, no invented names or numbers, 「无法辨认」 when unsure; the default system prompt keeps answers in Chinese. Without an image it is a plain text chat. Repetition control: see below. |
 | `image-describe` | `imageGenText` (same method) | `qwen3.5-0.8b` (same alternatives) | `image` + optional `text` / `userPrompt`; same behaviour. |
 | `ocr-image` (alternative) | `ocrImageGlm` | `glm-ocr` | GLM-OCR page reading, Markdown out (tables included). Not the slot default: see [Alternative implementations](#alternative-implementations). |
-| `embed-image` | `embedImage` | `embeddinggemma-2` (alternative `chinese-clip-base`, 512 dims, WASM) | One L2-normalized 768-d vector per image, as a `vectors` file in the TFV1 format (below). Same space as EmbeddingGemma 2 text embeddings (query prefix `task: search result \| query: `). The audio encoder is never loaded. |
 | `gen-text` | `genText` | `lfm2.5-350m`, `qwen3.5-0.8b-text` | Structured key-point extraction from `text`; `userPrompt` narrows it. The decoder is constrained to the JSON schema `{"key_points": string[]}` (transformers.js structured output) and `text` is that JSON. The instruction follows the document's language (a Chinese document gets a Chinese prompt and Chinese key points). Qwen3.5 text: see below. |
 
 Advanced params (`_params`): `max_new_tokens` everywhere; `max_pixels` for the vision models
 (Qwen3.5 default 448², GLM-OCR 1024²: the image is resized to that pixel budget, keeping the
 aspect ratio, because every 32 × 32 (Qwen) / 28 × 28 (GLM) square is one prompt token and prefill
-dominates the latency); `dims` for `embed-image` (768, or the Matryoshka sizes 512 / 256 / 128);
-`max_input_tokens` for `gen-text` (default 4096; longer text is cut).
+dominates the latency); `max_input_tokens` for `gen-text` (default 4096; longer text is cut).
 
 **Qwen3.5 repetition control** (`image-gen-text` / `image-describe` only). On a scanned contract
 page the 0.8B model used to loop 「背景为纯白色，内容清晰，……」 up to the old 512-token default
@@ -468,14 +361,13 @@ it on photos and video frames, and OCR for documents.
 |---|---|---|---|
 | `qwen3.5-0.8b` | `onnx-community/Qwen3.5-0.8B-ONNX` | 810 / 740 MB | Apache-2.0 |
 | `glm-ocr` | `onnx-community/GLM-OCR-ONNX` | 660 / 745 MB | MIT |
-| `embeddinggemma-2` | `onnx-community/embeddinggemma-2-ONNX` (text + vision only) | 290 / 316 MB | Apache-2.0; deployments must follow the [Gemma Prohibited Use Policy](https://gemma.ai/resources/prohibited-use/) |
 | `lfm2.5-350m` | `LiquidAI/LFM2.5-350M-ONNX` | 259 / 297 MB | **LFM Open License v1.0** (below) |
 | `qwen3.5-0.8b-text` | `onnx-community/Qwen3.5-0.8B-Text-ONNX` (text decoder only) | 490 / 571 MB | Apache-2.0 |
 
-**Runtime.** The shared transformers.js 4.3.2 / onnxruntime-web 1.31.1 runtime of `embed-text`
+**Runtime.** The plugin's shared transformers.js 4.3.2 / onnxruntime-web 1.31.1 runtime
 (`src/ml/transformers.ts`, same model base, same `dist/assets/ort/` wasm, same Cache API), with the
 WebGPU device, plus `@huggingface/transformers-structured-output` 4.3.2 for constrained JSON.
-Weights come from the [model base](#model-hosting-model-base) exactly like the embedding models,
+Weights come from the [model base](#model-hosting-model-base) like every other model,
 and every file is listed in [`models.json`](#model-manifest) (`approxMB` = first download with
 `shader-f16`; `files` cover both precision sets; a test keeps it in sync with
 `src/ml/catalog.ts`). Several T3 weight files are larger than 100 MB (the Qwen3.5 decoder data is
@@ -489,8 +381,7 @@ Cache API and creating the session), ≈100 tokens of JSON at ≈45 tokens/s; th
 2.3 s, first token after 0.24 s; a fresh worker with the model in the Cache API: 2.5 s; cancel
 lands within one token. Same setup, the other T3 models (first run = download from the local model
 base + session creation + inference): `image-gen-text` Qwen3.5-0.8B describing a 900×172 image,
-128 new tokens, 19.6 s; `ocr-image` GLM-OCR q4f16 reading a two-line invoice image exactly, 4.1 s;
-`embed-image` EmbeddingGemma 2 q4f16, 2.8 s.
+128 new tokens, 19.6 s; `ocr-image` GLM-OCR q4f16 reading a two-line invoice image exactly, 4.1 s.
 
 #### `gen-text` with Qwen3.5-0.8B text (`qwen3.5-0.8b-text`)
 
@@ -538,12 +429,6 @@ The same pattern, default first: `gen-text` `["lfm2.5-350m", "qwen3.5-0.8b-text"
 (`+ffmpeg-wasm`: the same recognizer with the audio decoded by ffmpeg.wasm), `parse-document`
 `[…, "mupdf"]` (PDF only) and `render-pages` `["pdfjs", "mupdf"]` (implementation ids, not models).
 
-#### TFV1 vector files
-
-`embed-image` (like `embed-text`) returns `vectors` as a file, `<image stem>.tfv1`,
-`application/octet-stream`, little-endian: magic `"TFV1"`, `u32 dims`, `u32 count`, then
-`count × dims` float32 row-major. It is the format scanall's `@scanall/kb` reads.
-
 #### LFM2.5-350M license: revenue threshold
 
 LFM2.5-350M is under the **LFM Open License v1.0**, whose full text ships in
@@ -572,7 +457,6 @@ below), report download progress, and load lazily.
 | `detect-objects` | `dfine-nano-fp16`, `dfine-nano`, **`yolo26n`**, **`rf-detr-nano`** | YOLO26n (Ultralytics, NMS-free, `onnx-community/yolo26n-ONNX` fp16), RF-DETR nano (Roboflow, `onnx-community/rfdetr_nano-ONNX` fp16), raw onnxruntime-web | WASM (`_params.device: "webgpu"` opts in) | 5.0 MB / 54.4 MB |
 | `layout-detect` | `pp-doclayout-s`, `pp-doclayout-m`, **`pp-doclayoutv3`** | PP-DocLayoutV3 (official ONNX `PaddlePaddle/PP-DocLayoutV3_onnx`), raw onnxruntime-web | WASM | 130.5 MB (one file) |
 | `image-gen-text`, `image-describe` | `qwen3.5-0.8b`, **`lfm2.5-vl-450m`**, **`smolvlm2-500m`**, **`florence-2-base`** | transformers.js 4.3.2 | WebGPU only (same error as T3 without it) | 319 / 361 / 218 MB (with `shader-f16`; 368 / 347 / 218 MB without) |
-| `embed-image` | `embeddinggemma-2`, **`chinese-clip-base`** | Chinese-CLIP ViT-B/16 (`Xenova/chinese-clip-vit-base-patch16`, int8 joint graph), raw onnxruntime-web | WASM | 190.8 MB |
 | `parse-document` | **`builtin`**, **`pdfium`**, **`pdf2md`**, **`officeparser`**, **`readability`** | @embedpdf/pdfium 2.15.1, @opendocsg/pdf2md 0.4.0, officeparser 8.9.0 (slim browser build), @mozilla/readability 0.6.0 on linkedom | worker, no model | pdfium wasm 4.6 MB (in `dist/assets/pdfium/`) |
 
 **`detect-objects`.** Both alternatives are DETR-style set predictors (`logits [300, C]`,
@@ -610,13 +494,6 @@ host with a 100 MB per-file cap must raise it for this repo.
 All three use the anti-loop settings of the Qwen fix (repetition penalty 1.1 and a no-repeat 4-gram
 on the generated tokens only, the clause/loop post-filter), plus a sentence-level de-duplication for
 English, greedy decoding by default, and a **128-token** default budget (`max_new_tokens`).
-
-**`embed-image` `chinese-clip-base`.** No vision-only ONNX of Chinese-CLIP is published, so the joint
-int8 graph runs with a two-token `[CLS] [SEP]` text input (next to free), and the vector is its
-`image_embeds`, L2-normalized: **512 dims** (EmbeddingGemma 2: 768). The TFV1 file carries its dims
-and one run uses one model, so nothing downstream changes; `_params.dims` other than 512 fails. The
-vector is in Chinese-CLIP's space: text queries must be embedded with Chinese-CLIP's text tower.
-Runs on WASM, so unlike the default it needs no GPU.
 
 **`parse-document`.** The manifest `models` list is per slot, so `formats/impls.ts` says which
 formats each alternative reads, and any other format runs the built-in parser with a progress
@@ -661,8 +538,6 @@ absolute times are noisy; compare within a row group):
 | detect-objects | `rf-detr-nano` (fp16) | same | 5.1 s | 2.1 s | cat 0.96; person 0.98. Whiteboard photo: cup 0.91, cat 0.89, person 0.49 (int8 export: same detections, 4.0 s warm) |
 | layout-detect | `pp-doclayout-s` (default) | paper.pdf p1 / 采购合同-扫描件.pdf p1 | 7.7 s* | 0.8 s | 15 regions / 6 regions on the scanned contract (table found) |
 | layout-detect | `pp-doclayoutv3` | same | 20.8 s | 11.4 s | 17 regions (also finds the abstract and both figure titles) / 15 regions on the scan (title, every clause paragraph, the table, a footnote); table chains into table-recognize |
-| embed-image | `embeddinggemma-2` (default, WebGPU) | cat.jpg / flipped cat | 13.0 s | 1.6 s | 768 dims; cos(cat, flipped) 0.994 > cos(cat, astronaut) 0.614 |
-| embed-image | `chinese-clip-base` (WASM) | same | 15.3 s | 2.1 s | 512 dims; cos(cat, flipped) 0.987 > cos(cat, astronaut) 0.510 |
 | image-gen-text | `qwen3.5-0.8b` (default) | cat.jpg / whiteboard.jpg | 58.7 s | 45.2 s | 「一只虎斑猫的特写，眼睛炯炯有神，背景虚化。」/ reads 「Q4 冲刺目标」「新版 WMS 12/15 上线」「扫码识别率 ≥ 99.5%」 |
 | image-gen-text | `lfm2.5-vl-450m` | same | 18.0 s | 3.4 s | 「这是一张猫的特写照片，猫有着绿色的眼睛和棕色的条纹。背景模糊不清。…」/ names the whiteboard, coffee and cat, misreads the heading (「Q4 神秘项目标」) |
 | image-gen-text | `smolvlm2-500m` | same | 19.4 s | 9.1 s | "a close up photo of a cat's face with the eyes looking directly at the camera" / "The image is a presentation slide with the following information and content:" (no detail) |
@@ -690,7 +565,7 @@ mono instead, and `<model>+ffmpeg-wasm` forces that; see [Media nodes and ffmpeg
 
 | Slot | Method | `models` | What it does |
 |---|---|---|---|
-| `transcribe` | `transcribe` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm`, `x-asr-zh-en`, `x-asr-zh-en+ffmpeg-wasm`; alternatives `whisper-large-v3-turbo`, `cohere-transcribe-03-2026`, `qwen3-asr-0.6b`, `zipformer-ctc-small-zh` (each also `+ffmpeg-wasm`, see [below](#alternative-audio-and-text-implementations)) | SenseVoiceSmall (int8): Chinese first (also en/ja/ko/yue), **with punctuation and ITN**. `language` is a hint (`zh`, `zh-CN`, `en`, `yue`/Cantonese/粤语, `ja`, `ko`; anything else = auto). Up to 30 s in one pass; longer audio is cut at pauses with Silero VAD into ≤ 25 s chunks, recognized one by one (progress `transcribing i/N`) and joined (no separator between CJK pieces). The ABI output has only `text`, so the detected language is not returned. `context` and `max_new_tokens` are ignored (CTC model). Model `x-asr-zh-en`: X-ASR zh-en (below), Chinese and English with punctuation and casing, same chunking; `language` is not used. |
+| `transcribe` | `transcribe` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm`, `x-asr-zh-en`, `x-asr-zh-en+ffmpeg-wasm`; alternatives `whisper-large-v3-turbo`, `cohere-transcribe-03-2026`, `qwen3-asr-0.6b`, `zipformer-ctc-small-zh` (each also `+ffmpeg-wasm`, see [below](#alternative-audio-implementations)) | SenseVoiceSmall (int8): Chinese first (also en/ja/ko/yue), **with punctuation and ITN**. `language` is a hint (`zh`, `zh-CN`, `en`, `yue`/Cantonese/粤语, `ja`, `ko`; anything else = auto). Up to 30 s in one pass; longer audio is cut at pauses with Silero VAD into ≤ 25 s chunks, recognized one by one (progress `transcribing i/N`) and joined (no separator between CJK pieces). The ABI output has only `text`, so the detected language is not returned. `context` and `max_new_tokens` are ignored (CTC model). Model `x-asr-zh-en`: X-ASR zh-en (below), Chinese and English with punctuation and casing, same chunking; `language` is not used. |
 | `transcribe-timestamp` | `transcribeTimestamp` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm`, `x-asr-zh-en`, `x-asr-zh-en+ffmpeg-wasm`; `zipformer-ctc-small-zh`, `whisper-large-v3-turbo` (each also `+ffmpeg-wasm`) | The same recognition, plus `time_stamps`: `[{"start":0.92,"end":5.832,"text":"大家好，今天我们讨论一下下个季度的产品计划。"}, …]`, seconds, one entry per sentence. Token times come from the recognizer (SenseVoice CTC frames, `(frame − 4) × 60 ms` as sherpa-onnx computes them; X-ASR transducer emissions, 40 ms frames); a sentence ends at 。！？；!?; (a `.` that is not a decimal point), at a chunk boundary or at a pause over 1.2 s between tokens. Silero VAD always runs: a sentence starts no earlier than its speech span (≤ 0.6 s before its first token) and ends where the span ends (≤ 0.8 s after its last spoken token; late-emitted punctuation does not count). Monotonic (`start ≤ end ≤ next.start`) and within the audio. Long audio: the same pause-based chunks as `transcribe`. `context` / `max_new_tokens` are ignored. |
 | `vad-segment` | `vadSegment` | `silero-vad-v5`, `silero-vad-v5+ffmpeg-wasm` | `segments`: one 16 kHz mono 16-bit WAV per speech span (`x-expand-each`), named `<stem>-001-1.09s-5.68s.wav`. Silero's own `get_speech_timestamps` logic; defaults threshold 0.5, min speech 250 ms, min silence 500 ms, pad 200 ms, max 30 s (split at the last ≥ 98 ms pause). `_params` may override `threshold`, `min_speech_ms`, `min_silence_ms`, `speech_pad_ms`, `max_speech_s`. |
 | `diarize-speakers` | `diarizeSpeakers` | `pyannote-campplus-zh`, `pyannote-campplus-zh+ffmpeg-wasm`; `nemotron-3-diarization` (also `+ffmpeg-wasm`) | `segments` (JSON string): `[{"speaker":0,"start":0.976,"end":5.718}, …]`, seconds, sorted by start, speakers numbered by first appearance. pyannote segmentation-3.0 over 10 s windows (1 s step) → per-window local speakers → 3D-Speaker CAM++ (zh-cn) embedding of each → complete-linkage clustering on cosine distance (threshold 0.5) → pyannote reconstruction; segments < 0.3 s dropped, same-speaker gaps ≤ 0.5 s merged. A port of sherpa-onnx's `OfflineSpeakerDiarizationPyannoteImpl`. `_params`: `num_speakers` (exact count), `threshold`. |
@@ -782,12 +657,12 @@ The X-ASR mirror was checked the same way on 2026-11-22: the release archive (Mo
   to ONNX and int8-quantized by k2-fsa/sherpa-onnx (modified files, Apache-2.0 §4(b)). The mirror has no
   LICENSE file: put the Apache-2.0 text next to the weights.
 
-### Alternative audio and text implementations
+### Alternative audio implementations
 
-Extra models for three existing slots (issue 30, part B). Each is one more entry in the slot's
+Extra models for two existing slots (issue 30, part B). Each is one more entry in the slot's
 manifest `models` list, picked by the node's `model` (`ctx.model`); the default stays first and
 unchanged, and each returns exactly the slot's ABI output (`text`; `segments` JSON
-`[{speaker,start,end}]`; a TFV1 `vectors` file). Like the default audio models, every audio
+`[{speaker,start,end}]`). Like the default audio models, every audio
 id also exists as `<id>+ffmpeg-wasm` (the same model, its input decoded by ffmpeg.wasm); the
 recognizer is chosen from the part before `+ffmpeg-wasm`. Every file is fetched from the model
 base, checked (size + SHA-256: `models/hub.ts` for the onnxruntime-web models, `ml/verified-fetch.ts`
@@ -804,13 +679,8 @@ segment's characters).
 | `transcribe` | `qwen3-asr-0.6b` | onnxruntime-web wasm (CPU) | 983 MB (sherpa-onnx int8 export) | Apache-2.0 | Port of sherpa-onnx's Qwen3-ASR glue: Whisper log-mel → conv front end → encoder → 0.6B decoder with the export's KV-cache protocol. Auto language (or `language`): the first piece's detected language is forced for the following pieces (without that, a piece could open with a stray `language Chinese` and lose its first sentences). Punctuation: yes. Best text in the comparison, and by far the slowest (table below). No token times, so not in `transcribe-timestamp`. |
 | `transcribe` | `zipformer-ctc-small-zh` | onnxruntime-web wasm (CPU) | 63 MB (int8) | Apache-2.0 | Tiny fallback: Kaldi fbank → CTC greedy → icefall byte-level BPE. **No punctuation** (and Chinese numerals). Mandarin only. Also in `transcribe-timestamp` (byte pieces grouped into characters, timed at their CTC frame). |
 | `diarize-speakers` | `nemotron-3-diarization` | onnxruntime-web wasm (CPU) | 83 MB (q4) | OpenMDW-1.1 | Streaming Sortformer, ≤ 8 speakers. Port of transformers' offline chunked forward (340-frame chunks, 40 look-ahead, FIFO + arrival-order speaker cache with its compression) and NeMo log-mel. `_params.threshold` = speaker probability (0.5). Same post-processing as pyannote (drop < 0.3 s, merge gaps ≤ 0.5 s, speakers by arrival). The 73 MB q4f16 needs WebGPU, so q4 is used. |
-| `embed-text` | `granite-embedding-97m-multilingual-r2` | transformers.js wasm | 123 MB (int8 98 MB + tokenizer 25 MB) | Apache-2.0 | 384 dims, CLS pooling + L2, no query prefix. |
-| `embed-text` | `harrier-oss-v1-270m` | transformers.js, **WebGPU** | 226 MB (q4 205 MB + tokenizer 20 MB) | MIT | 640 dims, last-token pooling inside the graph (`sentence_embedding`) + L2; queries get `Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: `. WebGPU only: every quantized export stores the 262k-token embedding table with `GatherBlockQuantized`, which the plugin's onnxruntime-web wasm build (asyncify) does not implement (`Could not find an implementation for GatherBlockQuantized(1)`). The host's `createQueryEmbedder` needs WebGPU too. |
 
 Models without WebGPU fail with the plugin's WebGPU error (`this node needs WebGPU, …`).
-`createQueryEmbedder({ model })` accepts the two new embedding ids (and `granite-embedding-97m-r2`,
-`harrier-270m`) with the right pooling and query prefix, so a knowledge base built with them is
-queried consistently.
 
 **Dropped: Moonshine streaming tiny-zh.** Its license is right: the streaming Mandarin model is
 MIT (the ModelScope mirror `xiaoyanit/moonshine-streaming-tiny-zh`, checkpoint of 2026-08-24, card
@@ -852,21 +722,6 @@ Diarization of the meeting (truth from the generating script: 2 speakers, 12 tur
 
 Both return the same 14 segments; their boundaries agree within 0.2 s.
 
-`embed-text` retrieval check: the four text demo documents (docx, PDF, xlsx, pptx, parsed and
-chunked by the plugin) plus the meeting and video scripts, 26 chunks; the README's 12 questions
-about them (the scanned-PDF and whiteboard questions need OCR and are left out); a hit is a chunk
-containing the answer among the top 3 by cosine (queries embedded by `createQueryEmbedder`).
-Neither alternative publishes C-MTEB scores, so this small check is the only Chinese number:
-
-| Model | Dims | recall@3 | MRR | Embed 26 chunks, warm | Per query (host; mean of 12, first includes load) | Runtime |
-|---|---|---|---|---|---|---|
-| `bge-small-zh-v1.5` | 512 | 0.833 (10/12) | 0.867 | 8.1 s | 37 ms | wasm |
-| `granite-embedding-97m-multilingual-r2` | 384 | 0.917 (11/12) | 0.755 | 27.2 s | 159 ms | wasm |
-| `harrier-oss-v1-270m` | 640 | 1.000 (12/12) | 0.889 | 4.5 s | 165 ms | WebGPU |
-
-Twelve questions is a small sample: one question is worth 0.083. The misses: bge-small ranks the
-专业版表计 and 静态回收期 chunks 5th; granite ranks the 扫码识别率 chunk 16th; harrier has no miss (two at rank 3).
-
 Test files: `test/node/alt-audio.test.ts` (byte-BPE, CTC text, NeMo and Whisper log-mel and the
 Sortformer speaker cache against numpy ports of the reference code, segments, Qwen3-ASR prompt and
 decoding helpers, language hints, streaming SHA-256 verification, models.json/manifest agreement),
@@ -884,8 +739,6 @@ one model at a time with `-t "<model>"`). `SCANALL_SAMPLES_DIR` points at the sa
 | `qwen3-asr-0.6b-int8` | `jkman2023/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25` | `conv_frontend.onnx`, `encoder.int8.onnx`, `decoder.int8.onnx`, `tokenizer/*`, `LICENSE` | 987 MB | Apache-2.0 |
 | `zipformer-ctc-small-zh-int8` | `csukuangfj/sherpa-onnx-zipformer-ctc-small-zh-int8-2025-07-16` | `model.int8.onnx`, `tokens.txt` | 63 MB | Apache-2.0 |
 | `nemotron-3-diarization-q4` | `onnx-community/Nemotron-3-Diarization-ONNX` | `onnx/model_q4.onnx` + `_data` | 83 MB | OpenMDW-1.1 (text in `licenses/`) |
-| `harrier-oss-v1-270m` | `onnx-community/harrier-oss-v1-270m-ONNX` | config, tokenizer, `onnx/model_q4.onnx` + `_data` | 226 MB | MIT |
-| `granite-embedding-97m-multilingual-r2` | `onnx-community/granite-embedding-97m-multilingual-r2-ONNX` | config, tokenizer, special tokens, `onnx/model_quantized.onnx` | 123 MB | Apache-2.0 |
 
 Several of these files are larger than 100 MB (the Cohere encoder data is 1.44 GB, the Qwen3-ASR
 decoder 756 MB): the 100 MB cap applies to user files, and the weight host must serve these.
@@ -895,8 +748,7 @@ Cohere Transcribe 03-2026 by Cohere (Apache-2.0); Qwen3-ASR-0.6B by the Qwen tea
 (Apache-2.0; ONNX export by Wasser1462, int8 packaging by k2-fsa/sherpa-onnx); Zipformer-CTC small
 zh by k2-fsa/icefall (Apache-2.0); **Nemotron-3-Diarization by NVIDIA, under the OpenMDW License
 Agreement v1.1**: redistribution must keep a copy of the agreement (`licenses/OpenMDW-1.1.txt`;
-host it next to the weights too) and the notices of origin; harrier-oss-v1-270m by Microsoft
-(MIT); granite-embedding-97m-multilingual-r2 by IBM (Apache-2.0). ONNX conversions and
+host it next to the weights too) and the notices of origin. ONNX conversions and
 quantizations by onnx-community and k2-fsa/sherpa-onnx (modified files: converted and quantized).
 
 ### Media nodes and ffmpeg.wasm
@@ -1001,12 +853,12 @@ so the plugin uses `veryfast` (CRF 23 either way): 66 s (≈ 21 fps). `split-vid
 
 ### Bundle
 
-Every library is a lazy dynamic import, so the entry is 15 kB (5.8 kB gzip) and each format loads only
+Every library is a lazy dynamic import, so the entry is 12 kB (4.7 kB gzip) and each format loads only
 what it needs. Gzip transfer on first use, chunks included:
 
 | First use of | Loads (gzip) |
 |---|---|
-| any slot | `index.js` 5.8 kB |
+| any slot | `index.js` 4.7 kB |
 | PDF text / render | pdf.js + its in-thread worker ≈ 495 kB (+ CMaps on demand, ≤ 1.6 MB raw total) |
 | PDF with model `mupdf` | MuPDF.js 24 kB + glue 3.6 kB, wasm 4.7 MB gzip (10.4 MB raw, `dist/assets/mupdf/`) |
 | .docx | mammoth, xmldom, defuddle, linkedom ≈ 496 kB |
@@ -1020,18 +872,15 @@ what it needs. Gzip transfer on first use, chunks included:
 | any media node (extract-audio, first/last frame, concat, remove/merge audio) | media glue 5.6 kB + Mediabunny ≈ 196 kB |
 | the ffmpeg.wasm fallback (any media or audio node) | ffmpeg glue ≈ 5 kB + worker shim 0.4 kB, then the core from the model base: 111 kB JS + 32.2 MB wasm (≈ 9.6 MB gzip), cached |
 | detect-language | eld medium ≈ 558 kB |
-| chunk-text / kb-write | 1.8 kB / 0.9 kB |
-| embed-text (and `embedQuery`) | transformers.js 123 kB + onnxruntime-web 42 kB + glue 3 kB, ort wasm 7.1 MB (28.7 MB raw), + the model (24 MB, or 103 MB for bge-base) |
-| `dist/kb-host.js` / `dist/embed-query.js` (host entries) | 0.6 kB / 0.65 kB |
-| any T3 node (WebGPU) | slot glue ≈ 6 kB + the same transformers.js / onnxruntime-web / ort wasm, then the model (250–850 MB) |
+| any T3 node (WebGPU) | slot glue ≈ 6 kB + transformers.js 123 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (28.7 MB raw), then the model (250–850 MB) |
 | gen-text | + structured output ≈ 15 kB (Qwen3.5 text: + the 490 MB model instead of LFM's 259 MB) |
 | any T1 vision node | slot glue 5.3 kB (`impl`) + geometry 2.6 kB + model registry 5.5 kB + hub 1.7 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared), then the model: OCR small 31 MB / tiny 6.3 MB, orientation 6.8 MB, layout 4.9 / 23.5 MB, table 7.8 MB + OCR small |
 | split-video | + split glue 3 kB + Mediabunny 195 kB + TransNetV2 31 MB |
 | detect-objects | glue 1 kB + transformers.js 123 kB + the shared runtime + D-FINE 7.9 MB (fp16, default) / 4.5 MB (int8); alternatives: + 1.3 kB glue, YOLO26n 5.0 MB / RF-DETR nano 54.4 MB |
 | parse-document alternatives | `pdfium` 38 kB + wasm 2.1 MB gzip (4.6 MB raw); `pdf2md` 12 kB + pdf.js (shared); `officeparser` 1.9 MB (6.3 MB raw); `readability` 11 kB + linkedom (shared) |
-| image-gen-text alternatives / chinese-clip-base | glue 2.6 kB / 1.0 kB, then the model (218–368 MB / 191 MB) |
+| image-gen-text alternatives | glue 2.6 kB, then the model (218–368 MB) |
 | any T2 audio node | audio pipeline 13 kB + Mediabunny 196 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared with transformers.js), then the models: SenseVoice 240 MB or X-ASR 175 MB, VAD 2.3 MB, diarization 34 MB, CED 6.2 MB |
-| audio alternatives | + their glue (lazy): Zipformer-CTC 1.3 kB, Qwen3-ASR 2.9 kB, Nemotron 3.1 kB, WebGPU ASR 1.8 kB (+ transformers.js), then the model (63 MB … 1.53 GB, table in [their section](#alternative-audio-and-text-implementations)) |
+| audio alternatives | + their glue (lazy): Zipformer-CTC 1.3 kB, Qwen3-ASR 2.9 kB, Nemotron 3.1 kB, WebGPU ASR 1.8 kB (+ transformers.js), then the model (63 MB … 1.53 GB, table in [their section](#alternative-audio-implementations)) |
 
 `dist/` is committed: the scanner requires the manifest's `entry` to exist, and hosts load the
 plugin straight from a clone. Rebuild it after any source change.
@@ -1062,11 +911,10 @@ the xberg legacy formats, `extract-audio` (remux needs no WebCodecs) and `detect
 `render-pages` and `get-first-frame` need a browser and run in the browser project. Run
 `npx playwright install chromium` once.
 
-**Real-model tests** (`test/browser/kb-models.test.ts`) never download anything. They run only when
-`EDGE_MODELS_DIR` points at a local model base (`<dir>/Xenova/bge-small-zh-v1.5/…`), which vitest
-serves at `/models/` (with `Range` support); otherwise they skip with that message. `EDGE_COI=1`
-serves the test page cross-origin isolated (threaded onnxruntime-web). Timings land in
-`test-results/kb-timings.json`.
+**Real-model tests** never download anything. They run only when `EDGE_MODELS_DIR` points at a
+local model base (`<dir>/<org>/<repo>/…`), which vitest serves at `/models/` (with `Range`
+support); otherwise they skip with that message. `EDGE_COI=1` serves the test page cross-origin
+isolated (threaded onnxruntime-web).
 
 ```bash
 EDGE_MODELS_DIR=../.models-cache npm run test:browser   # files from modelscope.cn/models/<org>/<repo>/resolve/master/<path>
@@ -1085,7 +933,7 @@ SLANet decoding and cell matching, TransNetV2 windows and scenes, the frame-diff
 layout ordering, and that the manifest, `models.json` and the model catalog agree.
 
 **T3 tests never download a model.** In Node they cover the pure parts (prompts, JSON salvage,
-image sizing, TFV1, progress throttling, quota and WebGPU checks) and the runtime glue against a
+image sizing, progress throttling, quota and WebGPU checks) and the runtime glue against a
 fake transformers.js (shared loads, download cancel, eviction, streaming, cancel). The default
 browser run checks that every T3 method fails with the WebGPU error (headless Chromium has no GPU
 adapter). Real inference runs only with `EDGE_MODELS_DIR` (above), which also launches Chromium with `--enable-unsafe-webgpu`
@@ -1134,7 +982,7 @@ bundled; the ABI types are type-only.
   it in the bundle.
 - `parse-document` does not open attachments of e-mails; it lists them.
 - **Alternative implementations** are a manifest `models` list on one slot entry
-  (`embed-text`: `["bge-small-zh-v1.5", "bge-base-zh-v1.5"]`, default first), and the method picks
+  (`ocr-image`: `["pp-ocrv6-small", "pp-ocrv6-tiny", "glm-ocr"]`, default first), and the method picks
   by `ctx.model`. The scanner rejects a `nodeSlot` declared twice, so separate entries per
   implementation are not possible.
 - transformers.js and onnxruntime-web contain their libraries' default hosts (huggingface.co,
@@ -1180,9 +1028,8 @@ not bundled** (below).
 
 Model weights are not part of this package; they are downloaded from the host's model base. Their
 licenses are in the [T3 models table](#t3-webgpu-nodes) and the [T2 audio section](#t2-audio-nodes);
-LFM2.5-350M's, the FunASR model license's and OpenMDW-1.1's (Nemotron-3-Diarization) full texts are in `licenses/`; the alternative audio/text models are listed in [their section](#alternative-audio-and-text-implementations). Attribution for the about page: "Qwen3.5-0.8B by the Qwen team, Alibaba Cloud
-(Apache-2.0)", "GLM-OCR by Zhipu AI (MIT)", "EmbeddingGemma 2 by Google DeepMind (Apache-2.0,
-Gemma Prohibited Use Policy)", "LFM2.5-350M by Liquid AI, Inc. (LFM Open License v1.0)",
+LFM2.5-350M's, the FunASR model license's and OpenMDW-1.1's (Nemotron-3-Diarization) full texts are in `licenses/`; the alternative audio models are listed in [their section](#alternative-audio-implementations). Attribution for the about page: "Qwen3.5-0.8B by the Qwen team, Alibaba Cloud
+(Apache-2.0)", "GLM-OCR by Zhipu AI (MIT)", "LFM2.5-350M by Liquid AI, Inc. (LFM Open License v1.0)",
 "PP-OCRv6, PP-LCNet, PP-DocLayout and SLANet_plus by PaddlePaddle (Apache-2.0)", "TransNetV2 © 2020
 Tomáš Souček (MIT)", "D-FINE by Peterande et al. (Apache-2.0)"; the T1 entries are in the
 [T1 models table](#t1-visiondocument-nodes).
@@ -1210,7 +1057,7 @@ Still avoided on purpose: scribe.js (AGPL-3.0 code, not needed). The Ultralytics
 (pre/post-processing is this plugin's own), and this plugin is AGPL-3.0 itself.
 Attribution for the alternatives: "YOLO26n by Ultralytics (AGPL-3.0)", "RF-DETR by Roboflow (Apache-2.0)",
 "PP-DocLayoutV3 by PaddlePaddle (Apache-2.0)", "LFM2.5-VL-450M by Liquid AI, Inc. (LFM Open License v1.0)",
-"SmolVLM2 by Hugging Face (Apache-2.0)", "Florence-2 by Microsoft (MIT)", "Chinese-CLIP by OFA-Sys (MIT)".
+"SmolVLM2 by Hugging Face (Apache-2.0)", "Florence-2 by Microsoft (MIT)".
 
 Test fixture `test/fixtures/hello-cjk.msg` comes from the msgreader test suite (Apache-2.0). The audio
 fixtures in `test/fixtures/audio/` were synthesized for this repo with macOS `say` (voices Tingting and Reed). The
@@ -1231,8 +1078,14 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 ## 中文
 
 [TongFlow](https://github.com/tong-io/tongflow) 官方**浏览器端边缘插件**。它在用户浏览器的 Web Worker 里,通过 TongFlow
-浏览器引擎完成以下工作:解析文档、把 PDF 渲染成页面图、从视频中抽取音轨和首帧/尾帧、拼接视频、去掉或替换视频的音轨(浏览器读不了的格式交给 ffmpeg.wasm)、识别文本语种,以及为端侧知识库切块和计算向量。
-文件不出设备。文档、音视频、语种节点是 **T0(零模型)** 节点;`embed-text` 首次使用时从宿主的 model base 下载 24 MB 模型。另有可选的 **T3(WebGPU)** 节点:图像理解、GLM-OCR、图像向量、要点抽取,模型 250–850 MB,见下文「T3 WebGPU 节点」。
+浏览器引擎完成以下工作:解析文档、把 PDF 渲染成页面图、从视频中抽取音轨和首帧/尾帧、拼接视频、去掉或替换视频的音轨(浏览器读不了的格式交给 ffmpeg.wasm)、识别文本语种,并运行小型音频、视觉和文档模型。
+文件不出设备。文档、音视频、语种节点是 **T0(零模型)** 节点;依赖模型的节点首次使用时从宿主的 model base 下载权重。另有可选的 **T3(WebGPU)** 节点:图像理解、GLM-OCR、要点抽取,模型 250–850 MB,见下文「T3 WebGPU 节点」。
+
+**0.2.0:移除了知识库 slot(改由宿主应用实现)。** `chunk-text`、`embed-text`、`embed-image`、`kb-write` 四个 slot,宿主入口
+`tongflow-edge-essentials/kb-host` 与 `tongflow-edge-essentials/embed-query`,以及只被它们使用的模型(bge-small/base-zh-v1.5、
+harrier-oss-v1-270m、granite-embedding-97m-multilingual-r2、EmbeddingGemma 2、Chinese-CLIP)均已删除。切块、向量化、入库属于应用自己的步骤:
+要建知识库的宿主收集工作流解析出的文本,自行切块、向量化、入库。manifest 对包含或不包含这几个 slot 的 TongFlow ABI 都有效。删掉的代码留在
+git 历史中(提交 `25dd826`、`7a918d1`、`48f611a`、`9b152df`)。
 
 ### 实现的 slot
 
@@ -1247,10 +1100,7 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 | `remove-video-audio` | `removeVideoAudio` | 去掉音轨,视频码流直接复制进 MP4(`-an -vcodec copy`);编码放不进 MP4 时才转 H.264 | 同上 |
 | `merge-video-audio` | `mergeVideoAudio` | 复制 `video` 的视频码流,`audio` 的音频转为 AAC,合成 MP4,时长取较短的一方(`-shortest`) | 同上 |
 | `detect-language` | `detectLanguage` | 输出文本的 ISO 639-1 语种代码,支持 60 种语言。不会因内容失败:eld 判不出的短句(「谢谢，辛苦了。」)按文字系统判定(汉字占字母一半以上为 `zh`,有假名为 `ja`,谚文为 `ko`);空文本或没有字母的文本返回 `und` | eld 2.1.1(medium 词典) |
-| `chunk-text` | `chunkText` | 文本切成知识库片段(见下方「知识库节点」) | 自写 |
-| `embed-text` | `embedText` | 文本转 TFV1 向量,默认 bge-small-zh-v1.5,可换 bge-base-zh-v1.5、granite-embedding-97m-multilingual-r2,WebGPU 下可换 harrier-oss-v1-270m | transformers.js 4.3.2、onnxruntime-web 1.31.1 |
-| `kb-write` | `kbWrite` | 校验并汇总片段和向量,由宿主存储 | 自写 |
-| `transcribe` | `transcribe` | 音频转中文优先、带标点的 `text`(SenseVoiceSmall;模型 `x-asr-zh-en` 为 X-ASR zh-en;备选 Qwen3-ASR-0.6B、Zipformer-CTC,WebGPU 下 Whisper large-v3-turbo、Cohere Transcribe) | onnxruntime-web 1.31.1,见下方「T2 音频节点」「音频与文本的备选实现」 |
+| `transcribe` | `transcribe` | 音频转中文优先、带标点的 `text`(SenseVoiceSmall;模型 `x-asr-zh-en` 为 X-ASR zh-en;备选 Qwen3-ASR-0.6B、Zipformer-CTC,WebGPU 下 Whisper large-v3-turbo、Cohere Transcribe) | onnxruntime-web 1.31.1,见下方「T2 音频节点」「音频的备选实现」 |
 | `transcribe-timestamp` | `transcribeTimestamp` | 音频转 `text` 加句级 `time_stamps` `[{start, end, text}]`(单位秒;SenseVoiceSmall,`x-asr-zh-en` 为 X-ASR) | 同上 |
 | `vad-segment` | `vadSegment` | 音频切成语音段 WAV(`segments`,Silero VAD) | 同上 |
 | `diarize-speakers` | `diarizeSpeakers` | 音频输出说话人分段 JSON `[{speaker,start,end}]`(pyannote + CAM++;可换 Nemotron-3-Diarization) | 同上 |
@@ -1279,59 +1129,13 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 | 老格式和长尾格式:.doc .ppt .rtf .odt .odp .pages .key .numbers .hwp .pst .fb2 .rst .tex .ipynb 等 | xberg-wasm 1.4.2,**遇到这类文件才加载**(wasm 约 41 MB,gzip 后约 17 MB) | Markdown |
 | 压缩包、图片、音视频、无法识别的格式 | — | `success: false` 并给出明确原因(压缩包由宿主在上传时解开;图片请走 `ocr-image`) |
 
-### 知识库节点:`chunk-text`、`embed-text`、`kb-write`
-
-入库流水线为 `文本 → chunk-text → embed-text → kb-write`,`kb-write` 同时读取 `chunk-text` 的片段。**插件本身不持有任何存储**:
-知识库在宿主里(scanall 的 `@scanall/kb`),由宿主把 `kb-write` 校验过的数据写进去。
-
-| Slot | 方法 | 模型(默认在前) | 作用 |
-|---|---|---|---|
-| `chunk-text` | `chunkText` | — | 收集到的 `texts` 输出 `chunks`。各部分以空行拼接,先分成块(段落、Markdown 表格、代码块、标题),再装进不超过 `max_chars` 的片段(默认 500,限制在 50..8000;按 UTF-16 计,一个汉字算 1)。单块放不下时按句末切(`。！？；…` 及后随引号、`! ? ;`、`. `、换行),仍放不下再硬切(优先在 `，、：, :` 和空格处)。相邻正文片段重叠约 80 字(`min(80, max_chars/5)`),取完整句子;表格、代码、新标题前后不加重叠。放得下的表格不拆(整体移到下一片段),超长表格按行拆,每段重复表头。标题不会落在片段末尾。空片段丢弃;完全没有文本时报错。 |
-| `embed-text` | `embedText` | `bge-small-zh-v1.5`、`bge-base-zh-v1.5`、`harrier-oss-v1-270m`、`granite-embedding-97m-multilingual-r2` | `texts` 输出 `vectors`:一个 TFV1 文件(`vectors.tfv1`),按输入顺序每条一行。transformers.js 加载 q8 ONNX,**CLS 池化 + L2 归一化**(BGE 的规定做法),文档不加指令前缀。small 每批 16 条、base 每批 8 条,按长度排序以减少补齐;每批后上报 `embedded i/N`;批间检查取消。模型文件和 ort wasm 的下载经 `modelDownload` 上报。 |
-| `kb-write` | `kbWrite` | — | 校验 `chunks` + `vectors`(TFV1)+ `source`:至少一个片段、没有空片段、TFV1 格式正确、向量数等于片段数、数值有限。输出 `text` = `{"source","chunkCount","dims","vectorsSha256"}`(JSON)。不存储任何东西。 |
-
-`embed-text` 用节点的 `model`(manifest 的 `models`,在画布上选择或用 `replaceImplementation` 切换);不设即 `bge-small-zh-v1.5`,
-也接受 `<org>/<repo>` 写法,以及简称 `granite-embedding-97m-r2`、`harrier-270m`。备选模型 granite r2(384 维,int8,CLS 池化,wasm)和
-harrier(640 维,q4,图内末 token 池化,**仅 WebGPU**)见「音频与文本的备选实现」。
-
-**TFV1** 原样复制自 `@scanall/kb/vectors`(`src/kb/tfv1.ts`)。本机有 scanall 仓库时(或设 `SCANALL_KB_DIR`),Node 测试会逐字节比对
-源文件和打包结果。
-
-#### `kb-write` 的宿主侧步骤(scanall 前端照此实现)
-
-采用方案 (a),不改 worker 协议。宿主用 `tongflow-edge-essentials/kb-host`(`dist/kb-host.js`,0.6 kB,不含 ML 代码)里的
-`tapKbWrite` 包一层 executor。它会记下每次**成功**的 `kb-write` 调用拿到的输入(正是 `kb-write` 校验过的片段、TFV1 字节和来源),
-以及本次运行里 `embed-text` 用的模型。代码见英文部分,步骤如下:
-
-1. 本次运行用 `tap.executor`。一个 tap 对应一次运行,复用前调用 `reset()`。
-2. **只有** `result.status === "success"`(不是 `partial`、`failed`、`cancelled`)且 `take()` 返回了数据时才提交。没有成功的
-   `kb-write` 时 `take()` 返回 `null`;有多个成功的 `kb-write`、或混用了多个嵌入模型时 `take()` 抛错。以上情况一律保留旧库。
-3. `beginIngest` → `add(payload.chunks, payload.vectors)` → `commit()`。`@scanall/kb` 会再查一遍数量和维度,提交失败则旧库原样保留。
-   文件名用 `payload.source`,`embedModel` 用 `payload.embedModel`(向量不是本次运行的 `embed-text` 产出时为空)。
-4. 节点结果显示 `kb-write` 的 `text`(或提交后的 `KbInfo`)。`kb-write` 的错误(如「3 chunks but 2 vectors」)本身就会让节点失败并给出原因。
-
-不方便包 executor 的宿主,也可以从运行结果里取同样的数据:`kb-write` 的 `chunks` 绑定指向 `chunk-text` 的 `chunks` 输出
-(`result.outputs[id].chunks`),`vectors` 绑定指向 `embed-text` 的 `vectors`(`{file_key}` → `store.get(file_key)`),`source` 是
-`config` 绑定。提交前用 `vectorsSha256` 核对字节。
-
-#### 宿主的查询向量:`embedQuery`
-
-`tongflow-edge-essentials/embed-query`(`dist/embed-query.js`,0.65 kB;ML 代码首次使用时从同一个 `dist/chunks/` 加载)用与
-`embed-text` **相同的模型、文件、池化和归一化**计算查询向量,并加上**该模型自己的**查询指令(文档从不加;`instruction: ""` 可关闭):BGE 为
-`为这个句子生成表示以用于检索相关文章：`,harrier 为 `HARRIER_QUERY_INSTRUCTION`(`Instruct: … Query: `),granite 不加。`model` 传知识库记录的
-`embedModel`;选 harrier 时,运行查询向量的页面或 worker 也要有 WebGPU。选项:`model`、`modelBase`、`pluginBase`、`instruction`、`onDownload`;一次性调用用 `embedQuery(text, options)`。
-
-做成单独入口而不是 worker 方法,是因为宿主在工作流运行之外、在自己的代码里调用它。**建议放在宿主自己的 Web Worker 里**(一次推理会占住
-所在线程约 40 ms),主线程也能用。同源部署时它与插件 worker 共用 Cache API,模型只下载一次。它算出的向量与 worker 的余弦约 0.996
-(q8 是逐次动态量化,同一文本在不同批次里结果略有差别)。
-
-#### 模型托管(model base)
+### 模型托管(model base)
 
 模型文件只从 **model base** 下载,目录为 `<modelBase><org>/<repo>/<path>`,与 ModelScope / Hugging Face 仓库一致,可 1:1 镜像
 (文件清单见 `models.json`)。取值顺序:`ctx.modelBase`(若引擎将来提供)→ `globalThis.__TONGFLOW_EDGE_CONFIG__.modelBase` → 同源
 `/models/`。worker 由引擎的 executor 创建,宿主无法预先注入代码,所以**用入口 URL 的查询参数设置**:
 `resolveModuleUrl` 返回 `…/dist/index.js?modelBase=<URL 编码的地址>`。入口会把它写进 worker 内的 `__TONGFLOW_EDGE_CONFIG__`
-(已有值优先)。进程内使用时在首次调用前设置 `globalThis.__TONGFLOW_EDGE_CONFIG__ = { modelBase }`;`embedQuery` 通过选项传入。
+(已有值优先)。进程内使用时在首次调用前设置 `globalThis.__TONGFLOW_EDGE_CONFIG__ = { modelBase }`。
 
 - 跨域的 model base 需要 CORS,并且应支持 `Range` 请求:transformers.js 用 `Range: bytes=0-0` 探测文件大小,不支持时每个文件会下载两遍。
 - transformers.js 设为 `allowLocalModels = false`、`remoteHost = modelBase`、`remotePathTemplate = "{model}/"`,模型文件缓存在
@@ -1345,21 +1149,14 @@ harrier(640 维,q4,图内末 token 池化,**仅 WebGPU**)见「音频与文本�
 - 构建时给 transformers.js 的会话创建/推理队列打补丁:一个模型加载失败后,同一 worker 里后续的模型不再全部带着同一个错误失败
   (`tsdown.config.ts` 的 `unpoisonedOrtChains`;升级后找不到对应代码时构建直接报错)。
 - **页面尽量开启跨源隔离**(`Cross-Origin-Opener-Policy: same-origin`、`Cross-Origin-Embedder-Policy: require-corp`):这样
-  onnxruntime-web 能用多线程,约快 2.6 倍;否则单线程运行。
+  onnxruntime-web 能用多线程,WASM 执行快数倍;否则单线程运行。
 
-#### 运行时与实测速度
+### ML 运行时
 
 transformers.js **4.3.2** + onnxruntime-web **1.31.1**(所有 ML 节点共用这一个版本;transformers.js 4.3.2 自己依赖
-`1.31.0-dev.20260914`,用 npm `overrides` 统一成 1.31.1),WASM 执行。headless Chromium(Playwright,Apple Silicon)实测,
-模型从本地 `EDGE_MODELS_DIR` 提供:
+`1.31.0-dev.20260914`,用 npm `overrides` 统一成 1.31.1),WASM 执行,T3 节点用 WebGPU。各节点的实测速度见下文对应章节。
 
-- 冷启动(ort wasm + 24 MB 模型加载、初始化、3 条短文本):单线程 1.2 s;
-- 16 个约 480 字的片段(默认片段大小):单线程 11–18 s(每片约 0.7–1.2 s,两次测量,慢的一次机器负载较高),跨源隔离多线程 4.2 s(每片约 260 ms);
-- `embedQuery` 预热 0.75 s,单次查询 42 ms。
-
-完整表格见英文部分。长文档的耗时主要在向量化(每 1000 个默认大小片段约 4–20 分钟)。
-
-#### MuPDF.js(模型 `mupdf`)
+### MuPDF.js(模型 `mupdf`)
 
 `parse-document` 的备选列表里多了 `mupdf`(默认仍是 `builtin`;MuPDF 只读 PDF,其它格式交给内置解析器),`render-pages` 的 `models` 为
 `["pdfjs", "mupdf"]`(默认仍是 `pdfjs`)。
@@ -1385,12 +1182,6 @@ MuPDF 首次 262 ms(含 wasm)/ 热态 12 ms;渲染 pdf.js 171–198 ms,MuPDF 147
 `[{id, source: "modelscope:<org>/<repo>", files, approxMB, license, attribution?}]`,权重托管任务按它同步。其中 `ffmpeg-wasm` 不是模型,
 而是 ffmpeg.wasm core:`source: "npm:@ffmpeg/core@0.12.10"`,文件放在 `<modelBase>npm/@ffmpeg/core@0.12.10/` 下,另带 `licenseFiles` 和
 `corresponding_source`(GPL 要求)。
-
-- `bge-small-zh-v1.5`(`embed-text` 默认):`modelscope:Xenova/bge-small-zh-v1.5`,24 MB,MIT;
-- `bge-base-zh-v1.5`:`modelscope:Xenova/bge-base-zh-v1.5`,103 MB(98.1 MiB,未超过单文件 100 MiB 上限),MIT。
-
-署名:bge-*-zh-v1.5 由 BAAI 发布([FlagEmbedding](https://github.com/FlagOpen/FlagEmbedding)),MIT 许可;Xenova 的 ONNX 转换件
-未标许可,跟随上游。随权重附上 BAAI 的 MIT 声明。
 
 ### 与引擎对接
 
@@ -1462,12 +1253,10 @@ TransNetV2 © 2020 Tomáš Souček(MIT),ONNX 导出者 q502892879;D-FINE 由 Pet
 | `image-gen-text` | `imageGenText` | `qwen3.5-0.8b`(备选 `lfm2.5-vl-450m`、`smolvlm2-500m`、`florence-2-base`) | 画布 `imageGenTextNode` 用的 slot。`text`(提示词,可为空)加可选 `image`;支持 `system`、`max_new_tokens`(192)、`enable_thinking`(默认关)、`temperature`(0.7,0 为贪心)、`top_p`(0.8)、`top_k`(20)。没有提示词时**用 1–3 句简体中文描述图片**,只写看得见的内容,不编造名称和数字,看不清写「无法辨认」;默认 system 提示也要求中文作答;没有图片时就是纯文本对话。防复读见下文 |
 | `image-describe` | `imageGenText`(同一方法) | `qwen3.5-0.8b`(备选同上) | `image` 加可选 `text`/`userPrompt`,行为相同 |
 | `ocr-image`(备选实现) | `ocrImageGlm` | `glm-ocr` | GLM-OCR 整页识别,输出 Markdown(含表格)。不是该 slot 的默认实现,见下文「备选实现」 |
-| `embed-image` | `embedImage` | `embeddinggemma-2`(备选 `chinese-clip-base`,512 维,WASM) | 每张图一条 L2 归一化的 768 维向量,以 TFV1 格式的 `vectors` 文件输出;与 EmbeddingGemma 2 文本向量同一空间。不加载音频编码器 |
 | `gen-text` | `genText` | `lfm2.5-350m`、`qwen3.5-0.8b-text` | 从 `text` 做结构化要点抽取,`userPrompt` 可限定范围。解码受 JSON schema `{"key_points": string[]}` 约束(transformers.js 结构化输出),输出 `text` 即该 JSON。提示词跟随原文语言:中文原文用中文指令、出中文要点。Qwen3.5 纯文本版见下文 |
 
 高级参数(`_params`):均支持 `max_new_tokens`;视觉模型支持 `max_pixels`(Qwen3.5 默认 448²,GLM-OCR 默认 1024²,按像素预算等比缩放,
-因为每 32×32(Qwen)/28×28(GLM)像素就是一个提示 token,prefill 决定耗时);`embed-image` 支持 `dims`(768,或 Matryoshka 的
-512/256/128);`gen-text` 支持 `max_input_tokens`(默认 4096,超出截断)。
+因为每 32×32(Qwen)/28×28(GLM)像素就是一个提示 token,prefill 决定耗时);`gen-text` 支持 `max_input_tokens`(默认 4096,超出截断)。
 
 **Qwen3.5 防复读**(仅 `image-gen-text`/`image-describe`)。此前对合同扫描页,0.8B 模型会反复输出「背景为纯白色，内容清晰，……」直到旧默认上限 512 token,
 还会编出「某某公司」之类的名称和金额。现在:重复惩罚 1.1(`_params.repetition_penalty`,1 为关闭)和 4-gram 不重复(`_params.no_repeat_ngram_size`,0 为关闭),
@@ -1486,11 +1275,10 @@ TransNetV2 © 2020 Tomáš Souček(MIT),ONNX 导出者 q502892879;D-FINE 由 Pet
 - 显存:最多常驻两个模型,超出时释放最久未用的空闲模型。
 - 精度:adapter 支持 `shader-f16` 时用 q4f16 权重(Qwen3.5 视觉塔用 fp16),否则用 q4。
 
-**模型**(首次下载量,有 / 无 `shader-f16`):Qwen3.5-0.8B 810/740 MB(Apache-2.0);GLM-OCR 660/745 MB(MIT);EmbeddingGemma 2
-文本+视觉 290/316 MB(Apache-2.0,另须遵守 Gemma 禁止使用政策);LFM2.5-350M 259/297 MB(**LFM Open License v1.0**);
+**模型**(首次下载量,有 / 无 `shader-f16`):Qwen3.5-0.8B 810/740 MB(Apache-2.0);GLM-OCR 660/745 MB(MIT);LFM2.5-350M 259/297 MB(**LFM Open License v1.0**);
 Qwen3.5-0.8B 纯文本版(`onnx-community/Qwen3.5-0.8B-Text-ONNX`)490/571 MB(Apache-2.0)。
 
-**运行时**:与 `embed-text` 共用 `src/ml/transformers.ts`(transformers.js 4.3.2 / onnxruntime-web 1.31.1、同一 model base、同一
+**运行时**:插件共用的 `src/ml/transformers.ts`(transformers.js 4.3.2 / onnxruntime-web 1.31.1、同一 model base、同一
 `dist/assets/ort/` wasm、同一 Cache API),使用 WebGPU device;结构化输出用 `@huggingface/transformers-structured-output` 4.3.2。
 权重同样从 model base 获取,全部文件列在 `models.json`(`approxMB` 为支持 `shader-f16` 时的首次下载量,`files` 覆盖两套精度,
 由测试与 `src/ml/catalog.ts` 保持一致)。部分权重文件超过 100 MB(Qwen3.5 decoder 数据 437 MB),模型服务器若有单文件上限需对这些仓库放开。
@@ -1498,8 +1286,7 @@ Qwen3.5-0.8B 纯文本版(`onnx-community/Qwen3.5-0.8B-Text-ONNX`)490/571 MB(Apa
 实测(Apple Silicon,无头 Chromium 159 加 `--enable-unsafe-webgpu --use-angle=metal`,Metal adapter 支持 `shader-f16`,模型本地提供):
 LFM2.5-350M q4f16 对约 200 字的中文合同条款做 `gen-text`,首次 6–11 s(其中 3.5–8 s 为把 255 MB 写入 Cache API 并创建 session),
 约 100 个 token、约 45 token/s;模型常驻时 2.3 s,首个 token 0.24 s;新 worker 从 Cache API 加载 2.5 s;取消在一个 token 内生效。同样环境下其它 T3 模型(首次 = 从本地 model base 下载 + 创建 session + 推理):
-`image-gen-text` Qwen3.5-0.8B 描述一张 900×172 图片、128 个新 token 19.6 s;`ocr-image` GLM-OCR q4f16 准确读出两行发票文字 4.1 s;
-`embed-image` EmbeddingGemma 2 q4f16 2.8 s。
+`image-gen-text` Qwen3.5-0.8B 描述一张 900×172 图片、128 个新 token 19.6 s;`ocr-image` GLM-OCR q4f16 准确读出两行发票文字 4.1 s。
 
 **`gen-text` 的 Qwen3.5-0.8B 纯文本版(`qwen3.5-0.8b-text`)**:**选它,`gen-text` 就可以完全在 Apache-2.0 下运行**,避开 LFM
 许可证的收入门槛。默认仍是 `lfm2.5-350m`,由宿主决定。模型是 onnx-community 导出的 Qwen3.5-0.8B 纯文本版(单个计算图,词嵌入共享,
@@ -1523,9 +1310,6 @@ LFM 只给五个主题词(「研发进度」「扫码识别率」……),Qwen �
 `["lfm2.5-350m", "qwen3.5-0.8b-text"]`,`transcribe` 和 `transcribe-timestamp` `["sensevoice-small", "sensevoice-small+ffmpeg-wasm", "x-asr-zh-en", "x-asr-zh-en+ffmpeg-wasm"]`(`+ffmpeg-wasm` 表示同一识别器、音频改由 ffmpeg.wasm 解码),
 `parse-document` `[…, "mupdf"]`(只读 PDF)和 `render-pages` `["pdfjs", "mupdf"]`(这里是实现 id 而不是模型)。
 
-**TFV1 向量文件**:`<图片名>.tfv1`,`application/octet-stream`,小端:魔数 `"TFV1"`、`u32 dims`、`u32 count`,之后是
-`count × dims` 个 float32(行优先),即 scanall `@scanall/kb` 读取的格式。
-
 **LFM2.5-350M 许可证的收入门槛**:LFM2.5-350M 采用 **LFM Open License v1.0**,全文见
 [`licenses/LFM-Open-License-v1.0.txt`](licenses/LFM-Open-License-v1.0.txt),再分发权重时必须随附(网页 demo 把权重发给浏览器即属再分发)。
 **只有当使用方的法律实体(连同其控制、受其控制或与其同受控制的所有关联实体)年收入低于 1000 万美元时,商业使用才在授权范围内**
@@ -1544,7 +1328,6 @@ SHA-256、许可证、licenseUrl 和署名;文件从 model base 获取,缓存前
 | `detect-objects` | `dfine-nano-fp16`、`dfine-nano`、**`yolo26n`**、**`rf-detr-nano`** | YOLO26n(Ultralytics,免 NMS,`onnx-community/yolo26n-ONNX` fp16)、RF-DETR nano(Roboflow,`onnx-community/rfdetr_nano-ONNX` fp16),直接用 onnxruntime-web | WASM(`_params.device: "webgpu"` 可开 WebGPU) | 5.0 MB / 54.4 MB |
 | `layout-detect` | `pp-doclayout-s`、`pp-doclayout-m`、**`pp-doclayoutv3`** | PP-DocLayoutV3(官方 ONNX `PaddlePaddle/PP-DocLayoutV3_onnx`) | WASM | 130.5 MB(单文件) |
 | `image-gen-text`、`image-describe` | `qwen3.5-0.8b`、**`lfm2.5-vl-450m`**、**`smolvlm2-500m`**、**`florence-2-base`** | transformers.js 4.3.2 | 仅 WebGPU(没有时报与 T3 相同的错误) | 319 / 361 / 218 MB(有 `shader-f16`;没有时 368 / 347 / 218 MB) |
-| `embed-image` | `embeddinggemma-2`、**`chinese-clip-base`** | Chinese-CLIP ViT-B/16(`Xenova/chinese-clip-vit-base-patch16`,int8 图文联合图) | WASM | 190.8 MB |
 | `parse-document` | **`builtin`**、**`pdfium`**、**`pdf2md`**、**`officeparser`**、**`readability`** | @embedpdf/pdfium 2.15.1、@opendocsg/pdf2md 0.4.0、officeparser 8.9.0(slim 浏览器版)、@mozilla/readability 0.6.0(跑在 linkedom 上) | worker,无模型 | pdfium wasm 4.6 MB(`dist/assets/pdfium/`) |
 
 - **目标检测**:两个备选都是 DETR 式集合预测(`logits [300, C]`、`pred_boxes [300, 4]`,相对中心点和宽高),由 `vision/detect-post.ts` 解码:
@@ -1567,9 +1350,6 @@ SHA-256、许可证、licenseUrl 和署名;文件从 model base 获取,缓存前
     或把提示词本身当任务 token(`<CAPTION>`、`<OCR>` 等,见其处理器配置);必须有图片(不能纯文本对话)。它的 q4f16 合并 decoder 在 onnxruntime-web 1.31.1 里加载失败,所以一律用 q4 的图。
   - 三者都沿用 Qwen 修复里的防复读设置(只作用于生成 token 的 1.1 重复惩罚和 4-gram 不重复、分句/循环后处理),英文另加整句去重,默认贪心解码,
     默认上限 **128** 个新 token(`max_new_tokens`)。
-- **图像向量 `chinese-clip-base`**:Chinese-CLIP 没有公开的纯视觉塔 ONNX,所以运行 int8 图文联合图,文本侧只喂两个 token `[CLS] [SEP]`
-  (几乎不耗时),取 `image_embeds` 并做 L2 归一化:**512 维**(EmbeddingGemma 2 是 768 维)。TFV1 文件自带维数,一次运行只用一个模型,
-  下游不受影响;`_params.dims` 只能是 512。向量处于 Chinese-CLIP 自己的空间,文本查询要用 Chinese-CLIP 的文本塔计算。跑在 WASM 上,不需要 GPU。
 - **文档解析**:manifest 的 `models` 是按 slot 而不是按格式列的,所以 `formats/impls.ts` 写明每个备选能读哪些格式,其它格式一律走内置解析器,
   并在进度里说明(如 `PDFium (@embedpdf/pdfium) does not read .docx files: using the built-in parser`):
   - `pdfium`(PDF):PDFium 逐页文本,页与页之间空一行。
@@ -1589,7 +1369,7 @@ SHA-256、许可证、licenseUrl 和署名;文件从 model base 获取,缓存前
 
 实测对比(质量与耗时)见英文部分的表格。结论:目标检测上 YOLO26n 最快、RF-DETR nano 分数最高,两者在白板照片上都检出了猫、杯子和人,默认的 D-FINE 没有;
 PP-DocLayoutV3 对扫描合同切得更细(15 个区域对 6 个),但 800² 输入在单线程 WASM 上慢一个数量级;LFM2.5-VL-450M 比 Qwen3.5-0.8B 快得多、能用中文描述,但读字会出错;
-SmolVLM2 和 Florence-2 只出英文,也读不出白板上的中文;Chinese-CLIP 不需要 GPU;文档解析的四个备选输出与内置解析器相当,pdf2md 会把大字号行过多地当成标题。
+SmolVLM2 和 Florence-2 只出英文,也读不出白板上的中文;文档解析的四个备选输出与内置解析器相当,pdf2md 会把大字号行过多地当成标题。
 
 ### T2 音频节点
 
@@ -1662,9 +1442,9 @@ snakers4 的 v5.1.2)、CED 字节一致;CAM++ 是较早的导出,GitHub 上的�
 - **X-ASR zh-en**,作者 Gilgamesh-J([X-ASR](https://github.com/Gilgamesh-J/X-ASR)),Apache-2.0;由 k2-fsa/sherpa-onnx 转为 ONNX 并做
   int8 量化(属修改过的文件,Apache-2.0 §4(b))。镜像仓库没有 LICENSE 文件,托管时请把 Apache-2.0 全文放在权重旁边。
 
-### 音频与文本的备选实现
+### 音频的备选实现
 
-为三个已有 slot 增加的备选模型(issue 30 B 部分)。每个都是该 slot 在 manifest `models` 列表里多出的一项,由节点的 `model`(`ctx.model`)选择;默认模型仍排第一、行为不变,输出与 ABI 完全一致(`text`;`segments` JSON `[{speaker,start,end}]`;TFV1 `vectors` 文件)。和默认音频模型一样,每个音频模型 id 都另有 `<id>+ffmpeg-wasm`(同一模型,输入改由 ffmpeg.wasm 解码),识别器按 `+ffmpeg-wasm` 前面的部分选择。所有文件都从 model base 下载,入缓存前校验大小和 SHA-256(onnxruntime-web 的模型由 `models/hub.ts` 校验,transformers.js 的模型由 `ml/verified-fetch.ts` 按 `models.json` 校验),经 `modelDownload` 上报进度,首次使用时才加载。识别器接入流水线自己的分段(Silero VAD 切成不超过 25 秒的片段)和拼接。`transcribe-timestamp` 提供其中两个能给出时间的:Zipformer-CTC(CTC 帧时间,40 ms)和 Whisper(段级时间,在段内按字均分)。
+为两个已有 slot 增加的备选模型(issue 30 B 部分)。每个都是该 slot 在 manifest `models` 列表里多出的一项,由节点的 `model`(`ctx.model`)选择;默认模型仍排第一、行为不变,输出与 ABI 完全一致(`text`;`segments` JSON `[{speaker,start,end}]`)。和默认音频模型一样,每个音频模型 id 都另有 `<id>+ffmpeg-wasm`(同一模型,输入改由 ffmpeg.wasm 解码),识别器按 `+ffmpeg-wasm` 前面的部分选择。所有文件都从 model base 下载,入缓存前校验大小和 SHA-256(onnxruntime-web 的模型由 `models/hub.ts` 校验,transformers.js 的模型由 `ml/verified-fetch.ts` 按 `models.json` 校验),经 `modelDownload` 上报进度,首次使用时才加载。识别器接入流水线自己的分段(Silero VAD 切成不超过 25 秒的片段)和拼接。`transcribe-timestamp` 提供其中两个能给出时间的:Zipformer-CTC(CTC 帧时间,40 ms)和 Whisper(段级时间,在段内按字均分)。
 
 | Slot | `model` | 运行时 | 下载量 | 许可证 | 说明 |
 |---|---|---|---|---|---|
@@ -1673,18 +1453,16 @@ snakers4 的 v5.1.2)、CED 字节一致;CAM++ 是较早的导出,GitHub 上的�
 | `transcribe` | `qwen3-asr-0.6b` | onnxruntime-web wasm(CPU) | 983 MB(sherpa-onnx int8 导出) | Apache-2.0 | 移植 sherpa-onnx 的 Qwen3-ASR 胶水代码:Whisper log-mel → 卷积前端 → 编码器 → 0.6B 解码器(按该导出的 KV 缓存协议)。自动识别语种(或由 `language` 指定):第一段识别出的语种会固定用于后面各段(否则某段可能以多余的 `language Chinese` 开头并丢掉开头几句)。有标点。对比中文字最准,也最慢(见下表)。没有 token 时间,不进 `transcribe-timestamp`。 |
 | `transcribe` | `zipformer-ctc-small-zh` | onnxruntime-web wasm(CPU) | 63 MB(int8) | Apache-2.0 | 极轻量兜底:Kaldi fbank → CTC 贪心 → icefall 字节级 BPE。**输出没有标点**(数字是汉字)。仅普通话。也可用于 `transcribe-timestamp`(字节片段合成整字,按其 CTC 帧计时)。 |
 | `diarize-speakers` | `nemotron-3-diarization` | onnxruntime-web wasm(CPU) | 83 MB(q4) | OpenMDW-1.1 | Streaming Sortformer,最多 8 人。移植 transformers 的离线分块前向(每块 340 帧、40 帧前瞻、FIFO + 按出场顺序的说话人缓存及其压缩)和 NeMo log-mel。`_params.threshold` 为说话人概率阈值(0.5)。后处理同 pyannote(丢弃短于 0.3 秒的段、合并间隔不超过 0.5 秒的同一说话人、按出场编号)。73 MB 的 q4f16 需要 WebGPU,所以用 q4。 |
-| `embed-text` | `granite-embedding-97m-multilingual-r2` | transformers.js wasm | 123 MB(int8 98 MB + 分词器 25 MB) | Apache-2.0 | 384 维,CLS 池化 + L2,查询不加前缀。 |
-| `embed-text` | `harrier-oss-v1-270m` | transformers.js,**WebGPU** | 226 MB(q4 205 MB + 分词器 20 MB) | MIT | 640 维,图内末 token 池化(`sentence_embedding`)+ L2;查询加 `Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: `。只能走 WebGPU:所有量化导出都用 `GatherBlockQuantized` 存 26 万词的嵌入表,插件用的 onnxruntime-web wasm(asyncify)版本没有实现这个算子。宿主的 `createQueryEmbedder` 也需要 WebGPU。 |
 
-没有 WebGPU 时,需要 WebGPU 的模型报插件统一的 WebGPU 错误。`createQueryEmbedder({ model })` 支持两个新的向量模型 id(以及简称 `granite-embedding-97m-r2`、`harrier-270m`),池化和查询前缀与文档侧一致。
+没有 WebGPU 时,需要 WebGPU 的模型报插件统一的 WebGPU 错误。
 
 **未接入:Moonshine streaming tiny-zh。** 许可证没问题:流式普通话模型是 MIT(ModelScope 镜像 `xiaoyanit/moonshine-streaming-tiny-zh`,2026-08-24 的检查点,模型卡 `license: mit`),不是非商用的非流式 `moonshine-tiny-zh` / `base-zh`(Moonshine Community License,已排除)。但它只发布了 PyTorch `safetensors`(`MoonshineStreamingForConditionalGeneration`,transformers 5.2):ModelScope 上没有 ONNX 导出,transformers.js 4.3.2 也只有旧的 `moonshine`、没有 `moonshine_streaming` 架构。要接入就得自己转 ONNX 并托管,不符合「按 ModelScope 仓库 1:1 镜像」的托管约定。
 
 **实测**(无头 Chromium,Apple Silicon,wasm 单线程,模型由本地服务器提供;WebGPU 经 Metal)。测试音频:scanall 演示样例的周会录音 `项目周会录音.m4a`(133 秒,两个 TTS 声音,14 句,12 次换人)和 `产品介绍短片.mp4` 的旁白(50 秒)。CER 以生成脚本为参考(只计字母、数字、汉字,不计标点;取原文与「数字写成阿拉伯数字」版本中较低的一个,所以 `99.2%` 和 `百分之九十九点二` 都算对)。热启动 = 模型已加载后的第二次运行;RTF = 热启动耗时 / 音频时长。表格见英文部分。
 
-说话人分离、向量召回的对比表也见英文部分。向量召回:四份文字类演示文档(docx、PDF、xlsx、pptx,由插件解析并切块)加周会和短片的脚本,共 26 个片段;样例 README 里与这些文件相关的 12 个问题(扫描件和白板的问题需要 OCR,未计入);按余弦取前 3,含答案即命中(查询向量由 `createQueryEmbedder` 计算)。两个新模型都没有公布 C-MTEB 成绩,这个小测是目前唯一的中文数据。
+说话人分离的对比表也见英文部分。
 
-**署名(关于 / 第三方许可页面):** Whisper large-v3-turbo(OpenAI,MIT);Cohere Transcribe 03-2026(Cohere,Apache-2.0);Qwen3-ASR-0.6B(阿里云通义千问团队,Apache-2.0;ONNX 导出 Wasser1462,int8 打包 k2-fsa/sherpa-onnx);Zipformer-CTC small zh(k2-fsa/icefall,Apache-2.0);**Nemotron-3-Diarization(NVIDIA,OpenMDW License Agreement v1.1)**:再分发必须附协议全文(`licenses/OpenMDW-1.1.txt`,托管时也放在权重旁边)并保留来源声明;harrier-oss-v1-270m(Microsoft,MIT);granite-embedding-97m-multilingual-r2(IBM,Apache-2.0)。ONNX 转换和量化由 onnx-community、k2-fsa/sherpa-onnx 完成(属于修改过的文件:已转换、已量化)。
+**署名(关于 / 第三方许可页面):** Whisper large-v3-turbo(OpenAI,MIT);Cohere Transcribe 03-2026(Cohere,Apache-2.0);Qwen3-ASR-0.6B(阿里云通义千问团队,Apache-2.0;ONNX 导出 Wasser1462,int8 打包 k2-fsa/sherpa-onnx);Zipformer-CTC small zh(k2-fsa/icefall,Apache-2.0);**Nemotron-3-Diarization(NVIDIA,OpenMDW License Agreement v1.1)**:再分发必须附协议全文(`licenses/OpenMDW-1.1.txt`,托管时也放在权重旁边)并保留来源声明。ONNX 转换和量化由 onnx-community、k2-fsa/sherpa-onnx 完成(属于修改过的文件:已转换、已量化)。
 
 ### 音视频节点与 ffmpeg.wasm
 
@@ -1751,7 +1529,7 @@ tarball 原样解开即可。两个文件都登记在 `models.json`(`id: "ffmpeg
 
 ### 包体
 
-所有库都是懒加载的动态 import:入口只有 15 kB(gzip 5.8 kB),每种格式只加载自己需要的部分。首次使用时的 gzip 传输量(含依赖的 chunk)见上方英文表格。
+所有库都是懒加载的动态 import:入口只有 12 kB(gzip 4.7 kB),每种格式只加载自己需要的部分。首次使用时的 gzip 传输量(含依赖的 chunk)见上方英文表格。
 主要数字:
 
 - PDF 约 495 kB;用模型 `mupdf` 时为 MuPDF.js 24 kB + 胶水 3.6 kB,另加 wasm gzip 4.7 MB(原始 10.4 MB,在 `dist/assets/mupdf/`);
@@ -1763,12 +1541,10 @@ tarball 原样解开即可。两个文件都登记在 `models.json`(`id: "ffmpeg
 - epub 约 514 kB;
 - 音视频节点约 196 kB(Mediabunny)加胶水 5.6 kB;用到 ffmpeg.wasm 兜底时另加胶水约 5 kB,再从 model base 下载 core(JS 111 kB + wasm 32.2 MB,gzip 约 9.6 MB,之后走缓存);
 - 语种识别约 558 kB;
-- 向量化:transformers.js 123 kB + onnxruntime-web 42 kB,ort wasm gzip 7.1 MB(原始 28.7 MB),另加模型 24 MB(bge-base 为 103 MB);
-- 切块 1.8 kB,kb-write 0.9 kB,宿主入口 `kb-host.js` / `embed-query.js` 各约 0.6 kB;
 - 老格式 91 kB,另加 wasm 约 17.3 MB;
 - T1 视觉节点:glue 约 15 kB 加共享的 onnxruntime-web 42 kB 与 ort wasm,再加模型(OCR small 31 MB/tiny 6.3 MB,方向 6.8 MB,版面 4.9/23.5 MB,表格 7.8 MB);
   切镜头另加 Mediabunny 195 kB 和 TransNetV2 31 MB;目标检测另加 transformers.js 123 kB 和 D-FINE 7.9 MB(默认 fp16;int8 4.5 MB);
-- T3 节点:同一套 transformers.js / onnxruntime-web / ort wasm,再加模型本身(250–850 MB);`gen-text` 另加结构化输出约 15 kB(选 Qwen3.5 纯文本版时模型 490 MB);
+- T3 节点:transformers.js 123 kB + onnxruntime-web 42 kB,ort wasm gzip 7.1 MB(原始 28.7 MB),再加模型本身(250–850 MB);`gen-text` 另加结构化输出约 15 kB(选 Qwen3.5 纯文本版时模型 490 MB);
 - T2 音频节点:音频管线 13 kB + Mediabunny 196 kB + 共享的 onnxruntime-web,再加模型(SenseVoice 240 MB 或 X-ASR 175 MB,VAD 2.3 MB,说话人分离 34 MB,CED 6.2 MB)。
 
 `dist/` 会提交进仓库:scanner 要求 manifest 的 `entry` 文件存在,宿主也是克隆仓库后直接加载。改动源码后要重新构建。
@@ -1792,7 +1568,7 @@ ffmpeg.wasm 测试(`test/browser/ffmpeg.test.ts`)需要 `EDGE_MODELS_DIR` 下有
 没有时这些测试跳过,只跑 Mediabunny 复制码流的测试。AMR-NB 测试只在存在 `test/fixtures/media/hello-zh.amr` 时运行:Homebrew 的 ffmpeg 没有
 AMR-NB 编码器(`libopencore_amrnb`),所以提交的素材里没有这个文件。
 
-**T3 测试从不下载模型。** Node 测试覆盖纯逻辑(提示词、JSON 修复、图片尺寸、TFV1、进度节流、配额与 WebGPU 检查)和基于假
+**T3 测试从不下载模型。** Node 测试覆盖纯逻辑(提示词、JSON 修复、图片尺寸、进度节流、配额与 WebGPU 检查)和基于假
 transformers.js 的运行时胶水(共享加载、取消下载、显存回收、流式、取消)。默认浏览器测试检查每个 T3 方法都给出 WebGPU 错误(无头
 Chromium 没有 GPU adapter)。真实推理只在设置本地模型目录时运行:`EDGE_MODELS_DIR=/path/to/models npm run test:browser`。目录结构同
 model base,目录挂在 `/models/`,Chromium 加 `--enable-unsafe-webgpu` 启动(macOS 另加 `--use-angle=metal`,无头模式即可拿到真 GPU;
@@ -1818,9 +1594,9 @@ manifest 条目。设置 `EDGE_MODELS_DIR` 时另跑:`test/node/audio-models.tes
 - **turndown** 的浏览器版用 `window.DOMParser` 解析 HTML 字符串,worker 里没有这个对象。插件先用 linkedom 解析,再把元素交给 turndown。
 - **msgreader** 依赖的 `iconv-lite` 需要 Node 的 `Buffer`,打包时换成了基于 `TextDecoder` 的垫片。
 - 邮件附件只列出清单,不展开解析。
-- **换实现**用同一个 slot 条目里的 `models` 列表表达(`embed-text`:`["bge-small-zh-v1.5", "bge-base-zh-v1.5"]`,默认在前),方法按
+- **换实现**用同一个 slot 条目里的 `models` 列表表达(`ocr-image`:`["pp-ocrv6-small", "pp-ocrv6-tiny", "glm-ocr"]`,默认在前),方法按
   `ctx.model` 选择。scanner 不允许同一个 `nodeSlot` 声明两次,所以无法每个实现各写一条。
-- **真模型测试**(`test/browser/kb-models.test.ts`)不会联网下载:只有设置 `EDGE_MODELS_DIR` 指向本地 model base 时才运行,否则跳过并给出说明。
+- **真模型测试**不会联网下载:只有设置 `EDGE_MODELS_DIR` 指向本地 model base 时才运行,否则跳过并给出说明。
 
 ### 许可证
 

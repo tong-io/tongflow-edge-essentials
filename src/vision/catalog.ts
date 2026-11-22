@@ -18,6 +18,4 @@ export const MANIFEST_MODELS: Record<string, { slot: string; repos: string[] }> 
     "dfine-nano": { slot: "detect-objects", repos: ["dfine-nano"] },
     yolo26n: { slot: "detect-objects", repos: ["yolo26n"] },
     "rf-detr-nano": { slot: "detect-objects", repos: ["rf-detr-nano"] },
-    // embed-image's alternative (raw onnxruntime-web, like the T1 models; the default is T3's EmbeddingGemma 2).
-    "chinese-clip-base": { slot: "embed-image", repos: ["chinese-clip-base"] },
 };

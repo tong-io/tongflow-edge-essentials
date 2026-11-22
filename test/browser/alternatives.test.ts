@@ -3,8 +3,8 @@
 //
 // - parse-document alternatives are libraries bundled in dist/: they always run.
 // - Model-backed alternatives need EDGE_MODELS_DIR (served at /models/, the default model base);
-//   a model whose files are missing there is skipped. The WebGPU ones (image-gen-text, the
-//   default embed-image) also need the GPU flags vitest.config.ts passes with EDGE_MODELS_DIR.
+//   a model whose files are missing there is skipped. The WebGPU ones (image-gen-text) also
+//   need the GPU flags vitest.config.ts passes with EDGE_MODELS_DIR.
 // Run one file at a time: EDGE_MODELS_DIR=… npx vitest run --project browser test/browser/alternatives.test.ts
 // Every measurement is collected and printed as one comparison table at the end.
 import { afterAll, describe, expect, it } from "vitest";
@@ -170,58 +170,6 @@ describe.runIf(MODELS)("layout-detect: PP-DocLayout-S (default) vs PP-DocLayoutV
             expect(skip.out).toEqual({ success: true, html: "" });
         }
     }, LONG);
-});
-
-/* ---------------------------------------------------------------- embed-image */
-
-function flipped(asset: { bytesBase64: string; mime?: string }) {
-    return createImageBitmap(new Blob([fromBase64(asset.bytesBase64) as BlobPart], { type: asset.mime })).then(async (bmp) => {
-        const c = new OffscreenCanvas(bmp.width, bmp.height);
-        const g = c.getContext("2d")!;
-        g.translate(bmp.width, 0);
-        g.scale(-1, 1);
-        g.drawImage(bmp, 0, 0);
-        const blob = await c.convertToBlob({ type: "image/png" });
-        return { bytesBase64: toBase64(new Uint8Array(await blob.arrayBuffer())), mime: "image/png", filename: "cat-flipped.png" };
-    });
-}
-
-function readTfv1(b64: string) {
-    const bytes = fromBase64(b64);
-    const v = new DataView(bytes.buffer);
-    const dims = v.getUint32(4, true);
-    return { dims, count: v.getUint32(8, true), vec: new Float32Array(bytes.buffer.slice(12, 12 + 4 * dims)) };
-}
-const cos = (a: Float32Array, b: Float32Array) => a.reduce((s, x, i) => s + x * b[i]!, 0);
-
-describe.runIf(MODELS)("embed-image: EmbeddingGemma 2 (default, WebGPU) vs Chinese-CLIP (WASM)", () => {
-    for (const [model, repo, file] of [
-        [undefined, "onnx-community/embeddinggemma-2-ONNX", "onnx/vision_encoder_q4f16.onnx"],
-        ["chinese-clip-base", "Xenova/chinese-clip-vit-base-patch16", "onnx/model_quantized.onnx"],
-    ] as const) {
-        it(model ?? "embeddinggemma-2 (default)", async (ctx) => {
-            if (!(await hasModel(repo, file))) return ctx.skip(`${repo} not in EDGE_MODELS_DIR`);
-            if (!model && !__EDGE_WEBGPU__) return ctx.skip("no WebGPU");
-            const cat = await fixture("cat.jpg", "image/jpeg");
-            const r = await coldWarm("embedImage", { image: cat }, model, undefined, { image: await flipped(cat) });
-            expect(r.cold.out.error).toBeUndefined();
-            const a = readTfv1(r.cold.out.vectors.bytesBase64);
-            const b = readTfv1(r.warm.out.vectors.bytesBase64);
-            const c = readTfv1((await call("embedImage", { image: await fixture("astronaut.jpg", "image/jpeg") }, model ? { model } : {})).out.vectors.bytesBase64);
-            expect(a.count).toBe(1);
-            expect(r.cold.out.vectors.filename).toBe("cat.tfv1");
-            expect(Math.abs(cos(a.vec, a.vec) - 1)).toBeLessThan(1e-3);
-            expect(cos(a.vec, b.vec)).toBeGreaterThan(cos(a.vec, c.vec));
-            record({
-                slot: "embed-image",
-                impl: model ?? "embeddinggemma-2",
-                input: "cat.jpg (cold) / flipped cat (warm)",
-                cold: r.coldMs,
-                warm: r.warmMs,
-                result: `${a.dims} dims; cos(cat, flipped cat) ${cos(a.vec, b.vec).toFixed(3)} > cos(cat, astronaut) ${cos(a.vec, c.vec).toFixed(3)}`,
-            });
-        }, LONG);
-    }
 });
 
 /* -------------------------------------------------------------- image-gen-text */

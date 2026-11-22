@@ -1,12 +1,12 @@
 /**
  * Model files of the alternative audio and text implementations (issue 30, part B):
- * the extra `transcribe`, `diarize-speakers` and `embed-text` models. Same contract as
+ * the extra `transcribe` and `diarize-speakers` models. Same contract as
  * `registry.ts`: paths are `<repo>/<path>` under the model base (the ModelScope repo
  * layout), and every file carries its size and SHA-256 (from the ModelScope API), checked
  * before a download is cached. `models.json` lists the same entries (a unit test keeps the
  * two in step).
  *
- * The models run by transformers.js (Whisper, Cohere Transcribe, harrier, granite) are
+ * The models run by transformers.js (Whisper, Cohere Transcribe) are
  * verified from their `models.json` checksums while transformers.js streams them
  * (`ml/verified-fetch.ts`); the others are fetched and verified by `models/hub.ts`.
  */
@@ -78,37 +78,11 @@ export const COHERE_TRANSCRIBE = {
     },
 } as const satisfies ModelSpec;
 
-export const HARRIER_270M = {
-    id: "harrier-oss-v1-270m",
-    repo: "onnx-community/harrier-oss-v1-270m-ONNX",
-    files: {
-        config: { path: "config.json", size: 1608, sha256: "5366f9919a82aaeceb6707bf218c5769f414d60f5dbaf781fa07e5465487fd7c" },
-        tokenizer: { path: "tokenizer.json", size: 20323311, sha256: "ec95be298bea26f90370854faa650744c9fb0a04ca5e5ff95dd3913393ac5e45" },
-        tokenizerConfig: { path: "tokenizer_config.json", size: 702, sha256: "135405f3479eaebc473e2e78593f2195c7598948a215ee748758def426b30f59" },
-        model: { path: "onnx/model_q4.onnx", size: 239762, sha256: "228dca2603b907d673dd99cf89c309c0ca68baeed127416a5e027a48e62b0f49" },
-        data: { path: "onnx/model_q4.onnx_data", size: 205492736, sha256: "b5a15487360f5341659480ae4b5ad60028d5f865bd329196ec8d5708bbed3118" },
-    },
-} as const satisfies ModelSpec;
-
-export const GRANITE_97M_R2 = {
-    id: "granite-embedding-97m-multilingual-r2",
-    repo: "onnx-community/granite-embedding-97m-multilingual-r2-ONNX",
-    files: {
-        config: { path: "config.json", size: 1215, sha256: "ae74d55a56f779774cb9a8e63d3c2da9ae1af83c00229ffdff43d0b38407a0ee" },
-        tokenizer: { path: "tokenizer.json", size: 25301671, sha256: "51947676cae1f991fa51c6b9a24e14ee5460e5f0b9f692f13bb3159829d1592a" },
-        tokenizerConfig: { path: "tokenizer_config.json", size: 12860, sha256: "6ed69389e30a8ecabfce2f9ebcdf0c908b34056f24d994340f2f216521c057d5" },
-        specialTokens: { path: "special_tokens_map.json", size: 871, sha256: "013787ee251ff611722479197c00853b62113ad303cb0a36524231783c676c69" },
-        model: { path: "onnx/model_quantized.onnx", size: 97858099, sha256: "704c1ebca5fbb7cd83ced41827658ac4c9990c64f7f2874d22b78044e5022e22" },
-    },
-} as const satisfies ModelSpec;
-
 export const ALT_MODELS: readonly ModelSpec[] = [
     WHISPER_TURBO,
     COHERE_TRANSCRIBE,
     QWEN3_ASR,
     ZIPFORMER_CTC_ZH,
     NEMOTRON_DIARIZATION,
-    HARRIER_270M,
-    GRANITE_97M_R2,
 ];
 

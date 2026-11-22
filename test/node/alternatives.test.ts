@@ -19,8 +19,6 @@ import { PARSE_IMPLS, implSupports, parseImpl, pickParser } from "../../src/form
 import { cleanPdfiumText } from "../../src/formats/pdfium.js";
 import { tidyPdf2md } from "../../src/formats/pdf2md.js";
 import { stripFrontMatter, tidyOfficeMarkdown } from "../../src/formats/officeparser.js";
-import { CLIP_NORM, clipDims } from "../../src/slots/embed-image-clip.js";
-import { EMBED_IMAGE_MODELS } from "../../src/slots/embed-image.js";
 import { fixture, nodeCtx } from "../helpers/node-ctx.js";
 
 const root = new URL("../../", import.meta.url);
@@ -227,28 +225,6 @@ describe("image-gen-text / image-describe alternatives", () => {
         }
         const bad = await impls.imageGenText({ text: "x" } as never, nodeCtx(undefined, { model: "llava" }));
         expect(bad.error).toMatch(/needs WebGPU|unknown model "llava"/);
-    });
-});
-
-describe("embed-image alternative: Chinese-CLIP", () => {
-    it("512 dims only, CLIP normalization, wired in the manifest", () => {
-        expect(clipDims(undefined)).toBe(512);
-        expect(clipDims(512)).toBe(512);
-        expect(() => clipDims(256)).toThrow(/512 dims/);
-        expect(CLIP_NORM.std[0]).toBeCloseTo(0.2686, 3);
-        expect(slotModels("embed-image")).toEqual([...EMBED_IMAGE_MODELS]);
-        expect(MANIFEST_MODELS["chinese-clip-base"]!.slot).toBe("embed-image");
-        const e = models.find((m) => m.id === "chinese-clip-base")!;
-        expect(e.files).toContain("onnx/model_quantized.onnx");
-        expect(e.license).toBe("MIT");
-    });
-
-    it("fails clearly without a browser (no OffscreenCanvas), before any download", async () => {
-        const ctx = nodeCtx(undefined, { model: "chinese-clip-base" });
-        const out = await impls.embedImage({ image: await fixture("cat.jpg", "image/jpeg") }, ctx);
-        expect(out.success).toBe(false);
-        expect(out.error).toMatch(/OffscreenCanvas/);
-        expect(ctx.rec.downloads).toEqual([]);
     });
 });
 
