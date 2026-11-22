@@ -356,7 +356,9 @@ describe("gen-text: Qwen3.5-0.8B text alternative", () => {
 describe("manifest: the alternatives sit in their slot's models list, default first", () => {
     it("transcribe / transcribe-timestamp, gen-text, parse-document, render-pages", () => {
         // with the ffmpeg.wasm-decoded variant of each recognizer (`<model>+ffmpeg-wasm`)
-        expect(slotEntry("transcribe")?.models).toEqual(["sensevoice-small", "sensevoice-small+ffmpeg-wasm", "x-asr-zh-en", "x-asr-zh-en+ffmpeg-wasm"]);
+        // (issue 30 B appends Whisper, Cohere Transcribe, Qwen3-ASR and Zipformer-CTC after these four)
+        expect(slotEntry("transcribe")?.models?.slice(0, 4)).toEqual(["sensevoice-small", "sensevoice-small+ffmpeg-wasm", "x-asr-zh-en", "x-asr-zh-en+ffmpeg-wasm"]);
+        expect(slotEntry("transcribe")?.models).toEqual([...SLOT_MODELS.transcribe]);
         expect(slotEntry("transcribe-timestamp")).toEqual({ nodeSlot: "transcribe-timestamp", method: "transcribeTimestamp", models: [...SLOT_MODELS["transcribe-timestamp"]] });
         expect(slotEntry("gen-text")?.models).toEqual(GEN_TEXT_MODELS.map((m) => m.id));
         expect(slotEntry("parse-document")?.models).toEqual([...PARSE_IMPLS]);

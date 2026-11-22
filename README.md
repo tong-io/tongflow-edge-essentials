@@ -28,12 +28,12 @@ understanding, GLM-OCR, image embeddings and key-point extraction with 250–850
 | `merge-video-audio` | `mergeVideoAudio` | `video`'s video stream copied + `audio`'s audio as AAC → MP4, cut to the shorter one (`-shortest`). | same |
 | `detect-language` | `detectLanguage` | Text → ISO 639-1 code (60 languages). Never fails on content: text too short for eld (「谢谢，辛苦了。」) is decided by its script (`zh` when Han ideographs are at least half the letters, `ja` with kana, `ko` for Hangul); empty or letter-free text is `und`. | eld 2.1.1 (`medium` n-grams) |
 | `chunk-text` | `chunkText` | Texts → chunks for the knowledge base (see [Knowledge base](#knowledge-base-chunk-text-embed-text-kb-write)) | own code |
-| `embed-text` | `embedText` | Texts → TFV1 vectors, bge-small-zh-v1.5 (default) or bge-base-zh-v1.5 | transformers.js 4.3.2, onnxruntime-web 1.31.1 |
+| `embed-text` | `embedText` | Texts → TFV1 vectors, bge-small-zh-v1.5 (default), bge-base-zh-v1.5, granite-embedding-97m-multilingual-r2, or harrier-oss-v1-270m (WebGPU) | transformers.js 4.3.2, onnxruntime-web 1.31.1 |
 | `kb-write` | `kbWrite` | Validates chunks + vectors and summarizes them; the host stores them | own code |
-| `transcribe` | `transcribe` | Audio → Chinese-first `text` with punctuation (SenseVoiceSmall; X-ASR zh-en as model `x-asr-zh-en`) | onnxruntime-web 1.31.1, see [T2 audio nodes](#t2-audio-nodes) |
-| `transcribe-timestamp` | `transcribeTimestamp` | Audio → `text` + sentence-level `time_stamps` `[{start, end, text}]` in seconds (SenseVoiceSmall; X-ASR as `x-asr-zh-en`) | same |
+| `transcribe` | `transcribe` | Audio → Chinese-first `text` with punctuation (SenseVoiceSmall; X-ASR zh-en as model `x-asr-zh-en`; Qwen3-ASR-0.6B, Zipformer-CTC and, on WebGPU, Whisper large-v3-turbo and Cohere Transcribe as [alternatives](#alternative-audio-and-text-implementations)) | onnxruntime-web 1.31.1, see [T2 audio nodes](#t2-audio-nodes) |
+| `transcribe-timestamp` | `transcribeTimestamp` | Audio → `text` + sentence-level `time_stamps` `[{start, end, text}]` in seconds (SenseVoiceSmall; X-ASR as `x-asr-zh-en`; also Zipformer-CTC and Whisper) | same |
 | `vad-segment` | `vadSegment` | Audio → speech segments as WAV `segments` (Silero VAD) | same |
-| `diarize-speakers` | `diarizeSpeakers` | Audio → `segments` JSON `[{speaker,start,end}]` (pyannote + CAM++) | same |
+| `diarize-speakers` | `diarizeSpeakers` | Audio → `segments` JSON `[{speaker,start,end}]` (pyannote + CAM++; alternative Nemotron-3-Diarization) | same |
 | `audio-tag` | `audioTag` | Audio → `tags` JSON `[{label,score}]` (CED-tiny, AudioSet) | same |
 | `ocr-image` | `ocrImage` | Image → reading-ordered `text` (PP-OCRv6 small; `tiny`, or `glm-ocr` on WebGPU) | onnxruntime-web 1.31.1, see [T1 vision/document nodes](#t1-visiondocument-nodes) |
 | `image-orient` | `imageOrient` | Image → upright page PNG (PP-LCNet doc_ori) | same |
@@ -69,11 +69,12 @@ lives in the host (scanall, `@scanall/kb`), which commits what `kb-write` valida
 | Slot | Method | Models (default first) | What it does |
 |---|---|---|---|
 | `chunk-text` | `chunkText` | — | Collected `texts` → `chunks`. The parts are joined with a blank line, then cut into blocks (paragraphs, Markdown tables, fenced code, headings) and packed into chunks of at most `max_chars` (default 500, clamped to 50..8000; UTF-16 units, one per CJK character). A block too long for a chunk is split at sentence ends (`。！？；…` with closing quotes, `! ? ;`, `. ` and line breaks), then hard-cut (preferring `，、：, :` and spaces). Consecutive prose chunks share ≈80 characters (`min(80, max_chars/5)`) of whole sentences; no overlap into or out of a table, code or a new heading. A table that fits is never split (it moves to the next chunk); a longer one is split between rows and every piece repeats the header. A heading never ends a chunk. Empty chunks are dropped; no text at all fails. |
-| `embed-text` | `embedText` | `bge-small-zh-v1.5`, `bge-base-zh-v1.5` | `texts` → `vectors`: one TFV1 file (`vectors.tfv1`), one row per text in input order. q8 ONNX through transformers.js, **CLS pooling + L2 normalization** (what BGE prescribes), no instruction prefix for documents. Batches of 16 (small) / 8 (base), sorted by length to cut padding; progress `embedded i/N` after each batch; cancellation between batches. Model files and the ort wasm are reported through `modelDownload`. |
+| `embed-text` | `embedText` | `bge-small-zh-v1.5`, `bge-base-zh-v1.5`, `harrier-oss-v1-270m`, `granite-embedding-97m-multilingual-r2` | `texts` → `vectors`: one TFV1 file (`vectors.tfv1`), one row per text in input order. q8 ONNX through transformers.js, **CLS pooling + L2 normalization** (what BGE prescribes), no instruction prefix for documents. The alternatives ([below](#alternative-audio-and-text-implementations)): granite r2 (384 dims, int8, CLS pooling, wasm) and harrier (640 dims, q4, last-token pooling inside the graph, **WebGPU only**). Batches of 16 (small) / 8 (base), sorted by length to cut padding; progress `embedded i/N` after each batch; cancellation between batches. Model files and the ort wasm are reported through `modelDownload`. |
 | `kb-write` | `kbWrite` | — | Validates `chunks` + `vectors` (TFV1) + `source`: at least one chunk, no empty chunk, a well-formed TFV1, as many vectors as chunks, finite values. Returns `text` = `{"source","chunkCount","dims","vectorsSha256"}` (JSON). Stores nothing. |
 
 `embed-text`'s model is the node's `model` (manifest `models`, chosen on the canvas or swapped with
-`replaceImplementation`); absent means `bge-small-zh-v1.5`. The `<org>/<repo>` is accepted too.
+`replaceImplementation`); absent means `bge-small-zh-v1.5`. The `<org>/<repo>` is accepted too, and
+`granite-embedding-97m-r2` / `harrier-270m` as short names.
 
 **TFV1** is a verbatim copy of `@scanall/kb/vectors` (`src/kb/tfv1.ts`): `"TFV1"`, u32 dims, u32
 count, then `count × dims` float32, all little-endian. A Node test compares the file and its
@@ -127,8 +128,11 @@ node's `chunks` binding points at `chunk-text`'s `chunks` output (`result.output
 
 `tongflow-edge-essentials/embed-query` (`dist/embed-query.js`, 0.65 kB; the ML code loads on first
 use from the same `dist/chunks/`) embeds a search query with **the same model, file, pooling and
-normalization** as `embed-text`, and prefixes the BGE query instruction
-`为这个句子生成表示以用于检索相关文章：` (documents never get it; `instruction: ""` turns it off).
+normalization** as `embed-text`, and prefixes **that model's** query instruction (documents never
+get it; `instruction: ""` turns it off): BGE's `为这个句子生成表示以用于检索相关文章：`, harrier's
+`Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: `
+(`HARRIER_QUERY_INSTRUCTION`), none for granite. Pass the KB's recorded `embedModel` as `model`;
+harrier needs WebGPU on the page or worker that runs the query embedder too.
 
 ```ts
 import { createQueryEmbedder } from "tongflow-edge-essentials/embed-query";
@@ -686,10 +690,10 @@ mono instead, and `<model>+ffmpeg-wasm` forces that; see [Media nodes and ffmpeg
 
 | Slot | Method | `models` | What it does |
 |---|---|---|---|
-| `transcribe` | `transcribe` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm`, `x-asr-zh-en`, `x-asr-zh-en+ffmpeg-wasm` | SenseVoiceSmall (int8): Chinese first (also en/ja/ko/yue), **with punctuation and ITN**. `language` is a hint (`zh`, `zh-CN`, `en`, `yue`/Cantonese/粤语, `ja`, `ko`; anything else = auto). Up to 30 s in one pass; longer audio is cut at pauses with Silero VAD into ≤ 25 s chunks, recognized one by one (progress `transcribing i/N`) and joined (no separator between CJK pieces). The ABI output has only `text`, so the detected language is not returned. `context` and `max_new_tokens` are ignored (CTC model). Model `x-asr-zh-en`: X-ASR zh-en (below), Chinese and English with punctuation and casing, same chunking; `language` is not used. |
-| `transcribe-timestamp` | `transcribeTimestamp` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm`, `x-asr-zh-en`, `x-asr-zh-en+ffmpeg-wasm` | The same recognition, plus `time_stamps`: `[{"start":0.92,"end":5.832,"text":"大家好，今天我们讨论一下下个季度的产品计划。"}, …]`, seconds, one entry per sentence. Token times come from the recognizer (SenseVoice CTC frames, `(frame − 4) × 60 ms` as sherpa-onnx computes them; X-ASR transducer emissions, 40 ms frames); a sentence ends at 。！？；!?; (a `.` that is not a decimal point), at a chunk boundary or at a pause over 1.2 s between tokens. Silero VAD always runs: a sentence starts no earlier than its speech span (≤ 0.6 s before its first token) and ends where the span ends (≤ 0.8 s after its last spoken token; late-emitted punctuation does not count). Monotonic (`start ≤ end ≤ next.start`) and within the audio. Long audio: the same pause-based chunks as `transcribe`. `context` / `max_new_tokens` are ignored. |
+| `transcribe` | `transcribe` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm`, `x-asr-zh-en`, `x-asr-zh-en+ffmpeg-wasm`; alternatives `whisper-large-v3-turbo`, `cohere-transcribe-03-2026`, `qwen3-asr-0.6b`, `zipformer-ctc-small-zh` (each also `+ffmpeg-wasm`, see [below](#alternative-audio-and-text-implementations)) | SenseVoiceSmall (int8): Chinese first (also en/ja/ko/yue), **with punctuation and ITN**. `language` is a hint (`zh`, `zh-CN`, `en`, `yue`/Cantonese/粤语, `ja`, `ko`; anything else = auto). Up to 30 s in one pass; longer audio is cut at pauses with Silero VAD into ≤ 25 s chunks, recognized one by one (progress `transcribing i/N`) and joined (no separator between CJK pieces). The ABI output has only `text`, so the detected language is not returned. `context` and `max_new_tokens` are ignored (CTC model). Model `x-asr-zh-en`: X-ASR zh-en (below), Chinese and English with punctuation and casing, same chunking; `language` is not used. |
+| `transcribe-timestamp` | `transcribeTimestamp` | `sensevoice-small`, `sensevoice-small+ffmpeg-wasm`, `x-asr-zh-en`, `x-asr-zh-en+ffmpeg-wasm`; `zipformer-ctc-small-zh`, `whisper-large-v3-turbo` (each also `+ffmpeg-wasm`) | The same recognition, plus `time_stamps`: `[{"start":0.92,"end":5.832,"text":"大家好，今天我们讨论一下下个季度的产品计划。"}, …]`, seconds, one entry per sentence. Token times come from the recognizer (SenseVoice CTC frames, `(frame − 4) × 60 ms` as sherpa-onnx computes them; X-ASR transducer emissions, 40 ms frames); a sentence ends at 。！？；!?; (a `.` that is not a decimal point), at a chunk boundary or at a pause over 1.2 s between tokens. Silero VAD always runs: a sentence starts no earlier than its speech span (≤ 0.6 s before its first token) and ends where the span ends (≤ 0.8 s after its last spoken token; late-emitted punctuation does not count). Monotonic (`start ≤ end ≤ next.start`) and within the audio. Long audio: the same pause-based chunks as `transcribe`. `context` / `max_new_tokens` are ignored. |
 | `vad-segment` | `vadSegment` | `silero-vad-v5`, `silero-vad-v5+ffmpeg-wasm` | `segments`: one 16 kHz mono 16-bit WAV per speech span (`x-expand-each`), named `<stem>-001-1.09s-5.68s.wav`. Silero's own `get_speech_timestamps` logic; defaults threshold 0.5, min speech 250 ms, min silence 500 ms, pad 200 ms, max 30 s (split at the last ≥ 98 ms pause). `_params` may override `threshold`, `min_speech_ms`, `min_silence_ms`, `speech_pad_ms`, `max_speech_s`. |
-| `diarize-speakers` | `diarizeSpeakers` | `pyannote-campplus-zh`, `pyannote-campplus-zh+ffmpeg-wasm` | `segments` (JSON string): `[{"speaker":0,"start":0.976,"end":5.718}, …]`, seconds, sorted by start, speakers numbered by first appearance. pyannote segmentation-3.0 over 10 s windows (1 s step) → per-window local speakers → 3D-Speaker CAM++ (zh-cn) embedding of each → complete-linkage clustering on cosine distance (threshold 0.5) → pyannote reconstruction; segments < 0.3 s dropped, same-speaker gaps ≤ 0.5 s merged. A port of sherpa-onnx's `OfflineSpeakerDiarizationPyannoteImpl`. `_params`: `num_speakers` (exact count), `threshold`. |
+| `diarize-speakers` | `diarizeSpeakers` | `pyannote-campplus-zh`, `pyannote-campplus-zh+ffmpeg-wasm`; `nemotron-3-diarization` (also `+ffmpeg-wasm`) | `segments` (JSON string): `[{"speaker":0,"start":0.976,"end":5.718}, …]`, seconds, sorted by start, speakers numbered by first appearance. pyannote segmentation-3.0 over 10 s windows (1 s step) → per-window local speakers → 3D-Speaker CAM++ (zh-cn) embedding of each → complete-linkage clustering on cosine distance (threshold 0.5) → pyannote reconstruction; segments < 0.3 s dropped, same-speaker gaps ≤ 0.5 s merged. A port of sherpa-onnx's `OfflineSpeakerDiarizationPyannoteImpl`. `_params`: `num_speakers` (exact count), `threshold`. |
 | `audio-tag` | `audioTag` | `ced-tiny`, `ced-tiny+ffmpeg-wasm` | `tags` (JSON string): `[{"label":"Speech","score":0.7072}, …]`, AudioSet's 527 classes, the top 10 with score ≥ 0.1 (at least one). Long audio is tagged in 10 s windows (CED's training length) and each class keeps its maximum. `_params`: `top_k`, `min_score`. |
 
 **Runtime choice: onnxruntime-web, not sherpa-onnx WASM.** The plan was sherpa-onnx's WASM build
@@ -777,6 +781,123 @@ The X-ASR mirror was checked the same way on 2026-11-22: the release archive (Mo
 - **X-ASR zh-en** by Gilgamesh-J ([X-ASR](https://github.com/Gilgamesh-J/X-ASR)), Apache-2.0; converted
   to ONNX and int8-quantized by k2-fsa/sherpa-onnx (modified files, Apache-2.0 §4(b)). The mirror has no
   LICENSE file: put the Apache-2.0 text next to the weights.
+
+### Alternative audio and text implementations
+
+Extra models for three existing slots (issue 30, part B). Each is one more entry in the slot's
+manifest `models` list, picked by the node's `model` (`ctx.model`); the default stays first and
+unchanged, and each returns exactly the slot's ABI output (`text`; `segments` JSON
+`[{speaker,start,end}]`; a TFV1 `vectors` file). Like the default audio models, every audio
+id also exists as `<id>+ffmpeg-wasm` (the same model, its input decoded by ffmpeg.wasm); the
+recognizer is chosen from the part before `+ffmpeg-wasm`. Every file is fetched from the model
+base, checked (size + SHA-256: `models/hub.ts` for the onnxruntime-web models, `ml/verified-fetch.ts`
+from `models.json` for the transformers.js ones) before it is cached, reported through
+`modelDownload`, and loaded on first use. The recognizers plug into the pipeline's own chunking
+(Silero VAD pieces of ≤ 25 s) and joining. `transcribe-timestamp` offers the two that give times:
+Zipformer-CTC (CTC frame times, 40 ms) and Whisper (its segment times, spread evenly over each
+segment's characters).
+
+| Slot | `model` | Runtime | Download | License | Notes |
+|---|---|---|---|---|---|
+| `transcribe` | `whisper-large-v3-turbo` | transformers.js, **WebGPU** | 564 MB (q4f16; 760 MB q4 without `shader-f16`) | MIT | Multilingual. transformers.js defaults to English when no language is given, so the plugin predicts the language token first (one decoder step on the first piece of speech) and forces it for the whole recording; `language` overrides. Punctuation: yes. Also in `transcribe-timestamp` (segment-level times). |
+| `transcribe` | `cohere-transcribe-03-2026` | transformers.js, **WebGPU with `shader-f16`** | 1.53 GB (q4f16; the q4 encoder alone is 2 GB) | Apache-2.0 | 14 languages; **no language detection**: `language` picks one (`zh` when absent, Cantonese → `zh`, others rejected). Punctuation: yes. One weight file is 1.44 GB. |
+| `transcribe` | `qwen3-asr-0.6b` | onnxruntime-web wasm (CPU) | 983 MB (sherpa-onnx int8 export) | Apache-2.0 | Port of sherpa-onnx's Qwen3-ASR glue: Whisper log-mel → conv front end → encoder → 0.6B decoder with the export's KV-cache protocol. Auto language (or `language`): the first piece's detected language is forced for the following pieces (without that, a piece could open with a stray `language Chinese` and lose its first sentences). Punctuation: yes. Best text in the comparison, and by far the slowest (table below). No token times, so not in `transcribe-timestamp`. |
+| `transcribe` | `zipformer-ctc-small-zh` | onnxruntime-web wasm (CPU) | 63 MB (int8) | Apache-2.0 | Tiny fallback: Kaldi fbank → CTC greedy → icefall byte-level BPE. **No punctuation** (and Chinese numerals). Mandarin only. Also in `transcribe-timestamp` (byte pieces grouped into characters, timed at their CTC frame). |
+| `diarize-speakers` | `nemotron-3-diarization` | onnxruntime-web wasm (CPU) | 83 MB (q4) | OpenMDW-1.1 | Streaming Sortformer, ≤ 8 speakers. Port of transformers' offline chunked forward (340-frame chunks, 40 look-ahead, FIFO + arrival-order speaker cache with its compression) and NeMo log-mel. `_params.threshold` = speaker probability (0.5). Same post-processing as pyannote (drop < 0.3 s, merge gaps ≤ 0.5 s, speakers by arrival). The 73 MB q4f16 needs WebGPU, so q4 is used. |
+| `embed-text` | `granite-embedding-97m-multilingual-r2` | transformers.js wasm | 123 MB (int8 98 MB + tokenizer 25 MB) | Apache-2.0 | 384 dims, CLS pooling + L2, no query prefix. |
+| `embed-text` | `harrier-oss-v1-270m` | transformers.js, **WebGPU** | 226 MB (q4 205 MB + tokenizer 20 MB) | MIT | 640 dims, last-token pooling inside the graph (`sentence_embedding`) + L2; queries get `Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: `. WebGPU only: every quantized export stores the 262k-token embedding table with `GatherBlockQuantized`, which the plugin's onnxruntime-web wasm build (asyncify) does not implement (`Could not find an implementation for GatherBlockQuantized(1)`). The host's `createQueryEmbedder` needs WebGPU too. |
+
+Models without WebGPU fail with the plugin's WebGPU error (`this node needs WebGPU, …`).
+`createQueryEmbedder({ model })` accepts the two new embedding ids (and `granite-embedding-97m-r2`,
+`harrier-270m`) with the right pooling and query prefix, so a knowledge base built with them is
+queried consistently.
+
+**Dropped: Moonshine streaming tiny-zh.** Its license is right: the streaming Mandarin model is
+MIT (the ModelScope mirror `xiaoyanit/moonshine-streaming-tiny-zh`, checkpoint of 2026-08-24, card
+`license: mit`), unlike the non-streaming `moonshine-tiny-zh` / `base-zh` (Moonshine Community
+License, non-commercial, excluded). But it is published only as PyTorch `safetensors`
+(`MoonshineStreamingForConditionalGeneration`, transformers 5.2): no ONNX export exists on
+ModelScope, and transformers.js 4.3.2 has no `moonshine_streaming` architecture (only the old
+`moonshine`). Shipping it would mean converting and hosting our own ONNX files, outside the
+"mirror ModelScope repos 1:1" hosting contract.
+
+**Measured** (headless Chromium, Apple Silicon, single-threaded wasm, models from a local server;
+WebGPU through Metal). Test audio: scanall's demo meeting `项目周会录音.m4a` (133 s, two TTS voices,
+14 sentences, 12 speaker turns) and the narration of `产品介绍短片.mp4` (50 s). CER against the
+script (letters/digits/CJK only, punctuation ignored; the lower of the plain script and its
+digits-for-numerals version, so `99.2%` and `百分之九十九点二` both count as right). Warm = second
+run with the model loaded; RTF = warm time / audio length.
+
+| Model | Runtime | Download | CER meeting / video | Punctuation marks (meeting) | Warm meeting (RTF) | Warm video (RTF) | First meeting call (incl. load) |
+|---|---|---|---|---|---|---|---|
+| `sensevoice-small` SenseVoiceSmall (default) | wasm | 240 MB | 7.6% / 6.7% | 50 | 27.8 s (0.21) | 10.0 s (0.2) | 29.9 s |
+| `whisper-large-v3-turbo` Whisper large-v3-turbo | WebGPU | 564 MB | 14.8% / 8.6% | 38 | 42.0 s (0.32) | 17.8 s (0.36) | 50.4 s |
+| `cohere-transcribe-03-2026` Cohere Transcribe 03-2026 | WebGPU | 1.53 GB | 13.7% / 15.3% | 55 | 9.1 s (0.07) | 3.3 s (0.07) | 21.6 s |
+| `qwen3-asr-0.6b` Qwen3-ASR-0.6B | wasm | 983 MB | 5.9% / 4.7% | 58 | 347.9 s (2.61) ¹ | 97.9 s (1.96) ¹ | 347.9 s |
+| `zipformer-ctc-small-zh` Zipformer-CTC small zh | wasm | 63 MB | 8.8% / 7% | 0 | 17.1 s (0.13) | 6.1 s (0.12) | 24.4 s |
+
+¹ One run each (Qwen3-ASR is slow on the CPU); the times include loading the 983 MB model.
+Runs were sequential on one machine, one model at a time (earlier runs made while large downloads were
+in progress took up to 2.5× longer). Whisper's meeting CER depends on the piece length: 9.0% with
+28 s pieces in an earlier version, 14.8% with the shared 25 s pieces.
+Most errors are homophones on the synthetic voices (扫码 → 小马, 波次 → 播次, 陈思齐 → 陈思琪). Zipformer writes no punctuation.
+Whisper and Cohere write ASCII `,` `?` next to full-width `。`; SenseVoice and Qwen3-ASR write full-width marks.
+
+Diarization of the meeting (truth from the generating script: 2 speakers, 12 turns):
+
+| Model | Speakers | Turns found / truth | Turn order right | Warm (RTF) | First call |
+|---|---|---|---|---|---|
+| `pyannote-campplus-zh` pyannote + CAM++ (default) | 2 | 12 / 12 | yes | 43.6 s (0.33) | 43.5 s |
+| `nemotron-3-diarization` Nemotron-3-Diarization q4 | 2 | 12 / 12 | yes | 19.9 s (0.15) | 20.4 s |
+
+Both return the same 14 segments; their boundaries agree within 0.2 s.
+
+`embed-text` retrieval check: the four text demo documents (docx, PDF, xlsx, pptx, parsed and
+chunked by the plugin) plus the meeting and video scripts, 26 chunks; the README's 12 questions
+about them (the scanned-PDF and whiteboard questions need OCR and are left out); a hit is a chunk
+containing the answer among the top 3 by cosine (queries embedded by `createQueryEmbedder`).
+Neither alternative publishes C-MTEB scores, so this small check is the only Chinese number:
+
+| Model | Dims | recall@3 | MRR | Embed 26 chunks, warm | Per query (host; mean of 12, first includes load) | Runtime |
+|---|---|---|---|---|---|---|
+| `bge-small-zh-v1.5` | 512 | 0.833 (10/12) | 0.867 | 8.1 s | 37 ms | wasm |
+| `granite-embedding-97m-multilingual-r2` | 384 | 0.917 (11/12) | 0.755 | 27.2 s | 159 ms | wasm |
+| `harrier-oss-v1-270m` | 640 | 1.000 (12/12) | 0.889 | 4.5 s | 165 ms | WebGPU |
+
+Twelve questions is a small sample: one question is worth 0.083. The misses: bge-small ranks the
+专业版表计 and 静态回收期 chunks 5th; granite ranks the 扫码识别率 chunk 16th; harrier has no miss (two at rank 3).
+
+Test files: `test/node/alt-audio.test.ts` (byte-BPE, CTC text, NeMo and Whisper log-mel and the
+Sortformer speaker cache against numpy ports of the reference code, segments, Qwen3-ASR prompt and
+decoding helpers, language hints, streaming SHA-256 verification, models.json/manifest agreement),
+`test/node/alt-audio-models.test.ts` (Zipformer-CTC and Qwen3-ASR identical to sherpa-onnx 2.0.2's
+text; Zipformer sentence times; Nemotron's two alternating voices; Node, `EDGE_MODELS_DIR`), and
+`test/browser/alt-audio-text.test.ts` (WebGPU error / model URL without weights; with
+`EDGE_MODELS_DIR` and the demo samples, the tables above and `transcribe-timestamp` for Zipformer and Whisper, written to `test-results/alt-*.json`; run
+one model at a time with `-t "<model>"`). `SCANALL_SAMPLES_DIR` points at the samples (default
+`../../../ctsource/scanall/demo/samples`, served at `/__samples/`).
+
+| id (models.json) | Source (ModelScope) | Files | Size | License |
+|---|---|---|---|---|
+| `whisper-large-v3-turbo` | `onnx-community/whisper-large-v3-turbo` | config, generation/preprocessor config, tokenizer, `onnx/{encoder_model,decoder_model_merged}_{q4f16,q4}.onnx` | 564 MB / 760 MB per variant (1.33 GB both) | MIT |
+| `cohere-transcribe-03-2026` | `onnx-community/cohere-transcribe-03-2026-ONNX` | configs, tokenizer, `onnx/{encoder_model,decoder_model_merged}_q4f16.onnx` + `_data` | 1.54 GB | Apache-2.0 |
+| `qwen3-asr-0.6b-int8` | `jkman2023/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25` | `conv_frontend.onnx`, `encoder.int8.onnx`, `decoder.int8.onnx`, `tokenizer/*`, `LICENSE` | 987 MB | Apache-2.0 |
+| `zipformer-ctc-small-zh-int8` | `csukuangfj/sherpa-onnx-zipformer-ctc-small-zh-int8-2025-07-16` | `model.int8.onnx`, `tokens.txt` | 63 MB | Apache-2.0 |
+| `nemotron-3-diarization-q4` | `onnx-community/Nemotron-3-Diarization-ONNX` | `onnx/model_q4.onnx` + `_data` | 83 MB | OpenMDW-1.1 (text in `licenses/`) |
+| `harrier-oss-v1-270m` | `onnx-community/harrier-oss-v1-270m-ONNX` | config, tokenizer, `onnx/model_q4.onnx` + `_data` | 226 MB | MIT |
+| `granite-embedding-97m-multilingual-r2` | `onnx-community/granite-embedding-97m-multilingual-r2-ONNX` | config, tokenizer, special tokens, `onnx/model_quantized.onnx` | 123 MB | Apache-2.0 |
+
+Several of these files are larger than 100 MB (the Cohere encoder data is 1.44 GB, the Qwen3-ASR
+decoder 756 MB): the 100 MB cap applies to user files, and the weight host must serve these.
+
+**Attribution (about / third-party licenses page):** Whisper large-v3-turbo by OpenAI (MIT);
+Cohere Transcribe 03-2026 by Cohere (Apache-2.0); Qwen3-ASR-0.6B by the Qwen team, Alibaba Cloud
+(Apache-2.0; ONNX export by Wasser1462, int8 packaging by k2-fsa/sherpa-onnx); Zipformer-CTC small
+zh by k2-fsa/icefall (Apache-2.0); **Nemotron-3-Diarization by NVIDIA, under the OpenMDW License
+Agreement v1.1**: redistribution must keep a copy of the agreement (`licenses/OpenMDW-1.1.txt`;
+host it next to the weights too) and the notices of origin; harrier-oss-v1-270m by Microsoft
+(MIT); granite-embedding-97m-multilingual-r2 by IBM (Apache-2.0). ONNX conversions and
+quantizations by onnx-community and k2-fsa/sherpa-onnx (modified files: converted and quantized).
 
 ### Media nodes and ffmpeg.wasm
 
@@ -910,6 +1031,7 @@ what it needs. Gzip transfer on first use, chunks included:
 | parse-document alternatives | `pdfium` 38 kB + wasm 2.1 MB gzip (4.6 MB raw); `pdf2md` 12 kB + pdf.js (shared); `officeparser` 1.9 MB (6.3 MB raw); `readability` 11 kB + linkedom (shared) |
 | image-gen-text alternatives / chinese-clip-base | glue 2.6 kB / 1.0 kB, then the model (218–368 MB / 191 MB) |
 | any T2 audio node | audio pipeline 13 kB + Mediabunny 196 kB + onnxruntime-web 42 kB, ort wasm 7.1 MB (shared with transformers.js), then the models: SenseVoice 240 MB or X-ASR 175 MB, VAD 2.3 MB, diarization 34 MB, CED 6.2 MB |
+| audio alternatives | + their glue (lazy): Zipformer-CTC 1.3 kB, Qwen3-ASR 2.9 kB, Nemotron 3.1 kB, WebGPU ASR 1.8 kB (+ transformers.js), then the model (63 MB … 1.53 GB, table in [their section](#alternative-audio-and-text-implementations)) |
 
 `dist/` is committed: the scanner requires the manifest's `entry` to exist, and hosts load the
 plugin straight from a clone. Rebuild it after any source change.
@@ -1058,7 +1180,7 @@ not bundled** (below).
 
 Model weights are not part of this package; they are downloaded from the host's model base. Their
 licenses are in the [T3 models table](#t3-webgpu-nodes) and the [T2 audio section](#t2-audio-nodes);
-LFM2.5-350M's and the FunASR model license's full texts are in `licenses/`. Attribution for the about page: "Qwen3.5-0.8B by the Qwen team, Alibaba Cloud
+LFM2.5-350M's, the FunASR model license's and OpenMDW-1.1's (Nemotron-3-Diarization) full texts are in `licenses/`; the alternative audio/text models are listed in [their section](#alternative-audio-and-text-implementations). Attribution for the about page: "Qwen3.5-0.8B by the Qwen team, Alibaba Cloud
 (Apache-2.0)", "GLM-OCR by Zhipu AI (MIT)", "EmbeddingGemma 2 by Google DeepMind (Apache-2.0,
 Gemma Prohibited Use Policy)", "LFM2.5-350M by Liquid AI, Inc. (LFM Open License v1.0)",
 "PP-OCRv6, PP-LCNet, PP-DocLayout and SLANet_plus by PaddlePaddle (Apache-2.0)", "TransNetV2 © 2020
@@ -1126,12 +1248,12 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 | `merge-video-audio` | `mergeVideoAudio` | 复制 `video` 的视频码流,`audio` 的音频转为 AAC,合成 MP4,时长取较短的一方(`-shortest`) | 同上 |
 | `detect-language` | `detectLanguage` | 输出文本的 ISO 639-1 语种代码,支持 60 种语言。不会因内容失败:eld 判不出的短句(「谢谢，辛苦了。」)按文字系统判定(汉字占字母一半以上为 `zh`,有假名为 `ja`,谚文为 `ko`);空文本或没有字母的文本返回 `und` | eld 2.1.1(medium 词典) |
 | `chunk-text` | `chunkText` | 文本切成知识库片段(见下方「知识库节点」) | 自写 |
-| `embed-text` | `embedText` | 文本转 TFV1 向量,默认 bge-small-zh-v1.5,可换 bge-base-zh-v1.5 | transformers.js 4.3.2、onnxruntime-web 1.31.1 |
+| `embed-text` | `embedText` | 文本转 TFV1 向量,默认 bge-small-zh-v1.5,可换 bge-base-zh-v1.5、granite-embedding-97m-multilingual-r2,WebGPU 下可换 harrier-oss-v1-270m | transformers.js 4.3.2、onnxruntime-web 1.31.1 |
 | `kb-write` | `kbWrite` | 校验并汇总片段和向量,由宿主存储 | 自写 |
-| `transcribe` | `transcribe` | 音频转中文优先、带标点的 `text`(SenseVoiceSmall;模型 `x-asr-zh-en` 为 X-ASR zh-en) | onnxruntime-web 1.31.1,见下方「T2 音频节点」 |
+| `transcribe` | `transcribe` | 音频转中文优先、带标点的 `text`(SenseVoiceSmall;模型 `x-asr-zh-en` 为 X-ASR zh-en;备选 Qwen3-ASR-0.6B、Zipformer-CTC,WebGPU 下 Whisper large-v3-turbo、Cohere Transcribe) | onnxruntime-web 1.31.1,见下方「T2 音频节点」「音频与文本的备选实现」 |
 | `transcribe-timestamp` | `transcribeTimestamp` | 音频转 `text` 加句级 `time_stamps` `[{start, end, text}]`(单位秒;SenseVoiceSmall,`x-asr-zh-en` 为 X-ASR) | 同上 |
 | `vad-segment` | `vadSegment` | 音频切成语音段 WAV(`segments`,Silero VAD) | 同上 |
-| `diarize-speakers` | `diarizeSpeakers` | 音频输出说话人分段 JSON `[{speaker,start,end}]`(pyannote + CAM++) | 同上 |
+| `diarize-speakers` | `diarizeSpeakers` | 音频输出说话人分段 JSON `[{speaker,start,end}]`(pyannote + CAM++;可换 Nemotron-3-Diarization) | 同上 |
 | `audio-tag` | `audioTag` | 音频输出事件标签 JSON `[{label,score}]`(CED-tiny,AudioSet) | 同上 |
 | `ocr-image` | `ocrImage` | 图片转按阅读顺序的 `text`(PP-OCRv6 small;可换 `tiny`,WebGPU 下可换 `glm-ocr`) | onnxruntime-web 1.31.1,见下方「T1 视觉/文档节点」 |
 | `image-orient` | `imageOrient` | 图片转正,输出 PNG(PP-LCNet doc_ori) | 同上 |
@@ -1165,11 +1287,12 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 | Slot | 方法 | 模型(默认在前) | 作用 |
 |---|---|---|---|
 | `chunk-text` | `chunkText` | — | 收集到的 `texts` 输出 `chunks`。各部分以空行拼接,先分成块(段落、Markdown 表格、代码块、标题),再装进不超过 `max_chars` 的片段(默认 500,限制在 50..8000;按 UTF-16 计,一个汉字算 1)。单块放不下时按句末切(`。！？；…` 及后随引号、`! ? ;`、`. `、换行),仍放不下再硬切(优先在 `，、：, :` 和空格处)。相邻正文片段重叠约 80 字(`min(80, max_chars/5)`),取完整句子;表格、代码、新标题前后不加重叠。放得下的表格不拆(整体移到下一片段),超长表格按行拆,每段重复表头。标题不会落在片段末尾。空片段丢弃;完全没有文本时报错。 |
-| `embed-text` | `embedText` | `bge-small-zh-v1.5`、`bge-base-zh-v1.5` | `texts` 输出 `vectors`:一个 TFV1 文件(`vectors.tfv1`),按输入顺序每条一行。transformers.js 加载 q8 ONNX,**CLS 池化 + L2 归一化**(BGE 的规定做法),文档不加指令前缀。small 每批 16 条、base 每批 8 条,按长度排序以减少补齐;每批后上报 `embedded i/N`;批间检查取消。模型文件和 ort wasm 的下载经 `modelDownload` 上报。 |
+| `embed-text` | `embedText` | `bge-small-zh-v1.5`、`bge-base-zh-v1.5`、`harrier-oss-v1-270m`、`granite-embedding-97m-multilingual-r2` | `texts` 输出 `vectors`:一个 TFV1 文件(`vectors.tfv1`),按输入顺序每条一行。transformers.js 加载 q8 ONNX,**CLS 池化 + L2 归一化**(BGE 的规定做法),文档不加指令前缀。small 每批 16 条、base 每批 8 条,按长度排序以减少补齐;每批后上报 `embedded i/N`;批间检查取消。模型文件和 ort wasm 的下载经 `modelDownload` 上报。 |
 | `kb-write` | `kbWrite` | — | 校验 `chunks` + `vectors`(TFV1)+ `source`:至少一个片段、没有空片段、TFV1 格式正确、向量数等于片段数、数值有限。输出 `text` = `{"source","chunkCount","dims","vectorsSha256"}`(JSON)。不存储任何东西。 |
 
 `embed-text` 用节点的 `model`(manifest 的 `models`,在画布上选择或用 `replaceImplementation` 切换);不设即 `bge-small-zh-v1.5`,
-也接受 `<org>/<repo>` 写法。
+也接受 `<org>/<repo>` 写法,以及简称 `granite-embedding-97m-r2`、`harrier-270m`。备选模型 granite r2(384 维,int8,CLS 池化,wasm)和
+harrier(640 维,q4,图内末 token 池化,**仅 WebGPU**)见「音频与文本的备选实现」。
 
 **TFV1** 原样复制自 `@scanall/kb/vectors`(`src/kb/tfv1.ts`)。本机有 scanall 仓库时(或设 `SCANALL_KB_DIR`),Node 测试会逐字节比对
 源文件和打包结果。
@@ -1194,8 +1317,9 @@ astronaut, NASA public domain, coffee, CC0, and chelsea, CC0); `slide-frame.jpg`
 #### 宿主的查询向量:`embedQuery`
 
 `tongflow-edge-essentials/embed-query`(`dist/embed-query.js`,0.65 kB;ML 代码首次使用时从同一个 `dist/chunks/` 加载)用与
-`embed-text` **相同的模型、文件、池化和归一化**计算查询向量,并加上 BGE 查询指令 `为这个句子生成表示以用于检索相关文章：`(文档从不加;
-`instruction: ""` 可关闭)。选项:`model`、`modelBase`、`pluginBase`、`instruction`、`onDownload`;一次性调用用 `embedQuery(text, options)`。
+`embed-text` **相同的模型、文件、池化和归一化**计算查询向量,并加上**该模型自己的**查询指令(文档从不加;`instruction: ""` 可关闭):BGE 为
+`为这个句子生成表示以用于检索相关文章：`,harrier 为 `HARRIER_QUERY_INSTRUCTION`(`Instruct: … Query: `),granite 不加。`model` 传知识库记录的
+`embedModel`;选 harrier 时,运行查询向量的页面或 worker 也要有 WebGPU。选项:`model`、`modelBase`、`pluginBase`、`instruction`、`onDownload`;一次性调用用 `embedQuery(text, options)`。
 
 做成单独入口而不是 worker 方法,是因为宿主在工作流运行之外、在自己的代码里调用它。**建议放在宿主自己的 Web Worker 里**(一次推理会占住
 所在线程约 40 ms),主线程也能用。同源部署时它与插件 worker 共用 Cache API,模型只下载一次。它算出的向量与 worker 的余弦约 0.996
@@ -1537,6 +1661,30 @@ snakers4 的 v5.1.2)、CED 字节一致;CAM++ 是较早的导出,GitHub 上的�
   阿里通义实验室,Apache-2.0);Silero VAD(Silero Team,MIT);ONNX 导出来自 k2-fsa/sherpa-onnx(Apache-2.0)。
 - **X-ASR zh-en**,作者 Gilgamesh-J([X-ASR](https://github.com/Gilgamesh-J/X-ASR)),Apache-2.0;由 k2-fsa/sherpa-onnx 转为 ONNX 并做
   int8 量化(属修改过的文件,Apache-2.0 §4(b))。镜像仓库没有 LICENSE 文件,托管时请把 Apache-2.0 全文放在权重旁边。
+
+### 音频与文本的备选实现
+
+为三个已有 slot 增加的备选模型(issue 30 B 部分)。每个都是该 slot 在 manifest `models` 列表里多出的一项,由节点的 `model`(`ctx.model`)选择;默认模型仍排第一、行为不变,输出与 ABI 完全一致(`text`;`segments` JSON `[{speaker,start,end}]`;TFV1 `vectors` 文件)。和默认音频模型一样,每个音频模型 id 都另有 `<id>+ffmpeg-wasm`(同一模型,输入改由 ffmpeg.wasm 解码),识别器按 `+ffmpeg-wasm` 前面的部分选择。所有文件都从 model base 下载,入缓存前校验大小和 SHA-256(onnxruntime-web 的模型由 `models/hub.ts` 校验,transformers.js 的模型由 `ml/verified-fetch.ts` 按 `models.json` 校验),经 `modelDownload` 上报进度,首次使用时才加载。识别器接入流水线自己的分段(Silero VAD 切成不超过 25 秒的片段)和拼接。`transcribe-timestamp` 提供其中两个能给出时间的:Zipformer-CTC(CTC 帧时间,40 ms)和 Whisper(段级时间,在段内按字均分)。
+
+| Slot | `model` | 运行时 | 下载量 | 许可证 | 说明 |
+|---|---|---|---|---|---|
+| `transcribe` | `whisper-large-v3-turbo` | transformers.js,**WebGPU** | 564 MB(q4f16;无 `shader-f16` 时 q4 760 MB) | MIT | 多语种。transformers.js 不给语种时默认英语,所以插件先在第一段语音上预测语种 token(解码一步),整段录音固定用它;`language` 可覆盖。有标点。也可用于 `transcribe-timestamp`(段级时间)。 |
+| `transcribe` | `cohere-transcribe-03-2026` | transformers.js,**带 `shader-f16` 的 WebGPU** | 1.53 GB(q4f16;q4 编码器单个就 2 GB) | Apache-2.0 | 14 种语言,**不能自动识别语种**:由 `language` 指定(不给时为 `zh`,粤语按 `zh`,其它不支持的语种报错)。有标点。其中一个权重文件 1.44 GB。 |
+| `transcribe` | `qwen3-asr-0.6b` | onnxruntime-web wasm(CPU) | 983 MB(sherpa-onnx int8 导出) | Apache-2.0 | 移植 sherpa-onnx 的 Qwen3-ASR 胶水代码:Whisper log-mel → 卷积前端 → 编码器 → 0.6B 解码器(按该导出的 KV 缓存协议)。自动识别语种(或由 `language` 指定):第一段识别出的语种会固定用于后面各段(否则某段可能以多余的 `language Chinese` 开头并丢掉开头几句)。有标点。对比中文字最准,也最慢(见下表)。没有 token 时间,不进 `transcribe-timestamp`。 |
+| `transcribe` | `zipformer-ctc-small-zh` | onnxruntime-web wasm(CPU) | 63 MB(int8) | Apache-2.0 | 极轻量兜底:Kaldi fbank → CTC 贪心 → icefall 字节级 BPE。**输出没有标点**(数字是汉字)。仅普通话。也可用于 `transcribe-timestamp`(字节片段合成整字,按其 CTC 帧计时)。 |
+| `diarize-speakers` | `nemotron-3-diarization` | onnxruntime-web wasm(CPU) | 83 MB(q4) | OpenMDW-1.1 | Streaming Sortformer,最多 8 人。移植 transformers 的离线分块前向(每块 340 帧、40 帧前瞻、FIFO + 按出场顺序的说话人缓存及其压缩)和 NeMo log-mel。`_params.threshold` 为说话人概率阈值(0.5)。后处理同 pyannote(丢弃短于 0.3 秒的段、合并间隔不超过 0.5 秒的同一说话人、按出场编号)。73 MB 的 q4f16 需要 WebGPU,所以用 q4。 |
+| `embed-text` | `granite-embedding-97m-multilingual-r2` | transformers.js wasm | 123 MB(int8 98 MB + 分词器 25 MB) | Apache-2.0 | 384 维,CLS 池化 + L2,查询不加前缀。 |
+| `embed-text` | `harrier-oss-v1-270m` | transformers.js,**WebGPU** | 226 MB(q4 205 MB + 分词器 20 MB) | MIT | 640 维,图内末 token 池化(`sentence_embedding`)+ L2;查询加 `Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: `。只能走 WebGPU:所有量化导出都用 `GatherBlockQuantized` 存 26 万词的嵌入表,插件用的 onnxruntime-web wasm(asyncify)版本没有实现这个算子。宿主的 `createQueryEmbedder` 也需要 WebGPU。 |
+
+没有 WebGPU 时,需要 WebGPU 的模型报插件统一的 WebGPU 错误。`createQueryEmbedder({ model })` 支持两个新的向量模型 id(以及简称 `granite-embedding-97m-r2`、`harrier-270m`),池化和查询前缀与文档侧一致。
+
+**未接入:Moonshine streaming tiny-zh。** 许可证没问题:流式普通话模型是 MIT(ModelScope 镜像 `xiaoyanit/moonshine-streaming-tiny-zh`,2026-08-24 的检查点,模型卡 `license: mit`),不是非商用的非流式 `moonshine-tiny-zh` / `base-zh`(Moonshine Community License,已排除)。但它只发布了 PyTorch `safetensors`(`MoonshineStreamingForConditionalGeneration`,transformers 5.2):ModelScope 上没有 ONNX 导出,transformers.js 4.3.2 也只有旧的 `moonshine`、没有 `moonshine_streaming` 架构。要接入就得自己转 ONNX 并托管,不符合「按 ModelScope 仓库 1:1 镜像」的托管约定。
+
+**实测**(无头 Chromium,Apple Silicon,wasm 单线程,模型由本地服务器提供;WebGPU 经 Metal)。测试音频:scanall 演示样例的周会录音 `项目周会录音.m4a`(133 秒,两个 TTS 声音,14 句,12 次换人)和 `产品介绍短片.mp4` 的旁白(50 秒)。CER 以生成脚本为参考(只计字母、数字、汉字,不计标点;取原文与「数字写成阿拉伯数字」版本中较低的一个,所以 `99.2%` 和 `百分之九十九点二` 都算对)。热启动 = 模型已加载后的第二次运行;RTF = 热启动耗时 / 音频时长。表格见英文部分。
+
+说话人分离、向量召回的对比表也见英文部分。向量召回:四份文字类演示文档(docx、PDF、xlsx、pptx,由插件解析并切块)加周会和短片的脚本,共 26 个片段;样例 README 里与这些文件相关的 12 个问题(扫描件和白板的问题需要 OCR,未计入);按余弦取前 3,含答案即命中(查询向量由 `createQueryEmbedder` 计算)。两个新模型都没有公布 C-MTEB 成绩,这个小测是目前唯一的中文数据。
+
+**署名(关于 / 第三方许可页面):** Whisper large-v3-turbo(OpenAI,MIT);Cohere Transcribe 03-2026(Cohere,Apache-2.0);Qwen3-ASR-0.6B(阿里云通义千问团队,Apache-2.0;ONNX 导出 Wasser1462,int8 打包 k2-fsa/sherpa-onnx);Zipformer-CTC small zh(k2-fsa/icefall,Apache-2.0);**Nemotron-3-Diarization(NVIDIA,OpenMDW License Agreement v1.1)**:再分发必须附协议全文(`licenses/OpenMDW-1.1.txt`,托管时也放在权重旁边)并保留来源声明;harrier-oss-v1-270m(Microsoft,MIT);granite-embedding-97m-multilingual-r2(IBM,Apache-2.0)。ONNX 转换和量化由 onnx-community、k2-fsa/sherpa-onnx 完成(属于修改过的文件:已转换、已量化)。
 
 ### 音视频节点与 ffmpeg.wasm
 

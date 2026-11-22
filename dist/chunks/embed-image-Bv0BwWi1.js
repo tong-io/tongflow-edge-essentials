@@ -1,0 +1,1 @@
+export{n as embedImage}from"./embed-image-RN9v9ybv.js";

@@ -1,0 +1,1 @@
+import{a as e}from"./errors-BWKY3nUy.js";async function t(t){await new Promise(e=>setTimeout(e,0)),e(t)}export{t};

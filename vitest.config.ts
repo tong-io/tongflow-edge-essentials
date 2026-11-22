@@ -57,6 +57,19 @@ function serveModels() {
                     res.end("ok");
                     return;
                 }
+                if (url.startsWith("/__samples/")) {
+                    const name = decodeURIComponent(url.slice("/__samples/".length).split("?")[0]!);
+                    const file = join(samplesDir, normalize(name));
+                    if (name.includes("..") || !existsSync(file) || !statSync(file).isFile()) {
+                        res.statusCode = 404;
+                        res.end("not found");
+                        return;
+                    }
+                    res.setHeader("content-type", "application/octet-stream");
+                    res.setHeader("content-length", String(statSync(file).size));
+                    createReadStream(file).pipe(res);
+                    return;
+                }
                 if (!url.startsWith("/models/")) return next();
                 const rel = normalize(decodeURIComponent(url.slice("/models/".length).split("?")[0]!));
                 modelRequests.push(`${req.method} ${rel}${req.headers.range ? ` range=${req.headers.range}` : ""}`);
@@ -101,6 +114,12 @@ function serveModels() {
  */
 const WEBGPU = !!modelsDir || process.env.EDGE_WEBGPU === "1";
 const WEBGPU_ARGS = ["--enable-unsafe-webgpu", "--enable-features=Vulkan", ...(process.platform === "darwin" ? ["--use-angle=metal"] : [])];
+
+/**
+ * scanall's demo samples (`demo/samples`: the meeting recording, the product video, the
+ * documents), served at `/__samples/<name>` for the model comparison tests; optional.
+ */
+const samplesDir = process.env.SCANALL_SAMPLES_DIR ?? r("../../../ctsource/scanall/demo/samples");
 
 /** The host-side knowledge base (`@scanall/kb`), for the end-to-end ingest test; optional. */
 const scanallKb = process.env.SCANALL_KB_DIR ?? r("../../../ctsource/scanall/packages/kb");
@@ -152,6 +171,7 @@ export default defineConfig({
                 define: {
                     __EDGE_MODELS__: JSON.stringify(modelsDir),
                     __EDGE_WEBGPU__: JSON.stringify(WEBGPU),
+                    __SCANALL_SAMPLES__: JSON.stringify(existsSync(samplesDir)),
                     __SCANALL_KB__: JSON.stringify(existsSync(`${scanallKb}/src/index.ts`) ? `/@fs${scanallKb}/src/index.ts` : ""),
                     __DEMO_SAMPLES__: JSON.stringify(existsSync(demoSamples) ? `/@fs${demoSamples}/` : ""),
                 },
