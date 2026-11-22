@@ -830,13 +830,16 @@ run with the model loaded; RTF = warm time / audio length.
 
 | Model | Runtime | Download | CER meeting / video | Punctuation marks (meeting) | Warm meeting (RTF) | Warm video (RTF) | First meeting call (incl. load) |
 |---|---|---|---|---|---|---|---|
-| `sensevoice-small` SenseVoiceSmall (default) | wasm | 240 MB | 7.6% / 6.7% | 50 | 69.5 s (0.52) | 27.3 s (0.55) | 79.8 s |
-| `whisper-large-v3-turbo` Whisper large-v3-turbo | WebGPU | 564 MB | 9% / 8.6% | 38 | 39.4 s (0.3) | 16.1 s (0.32) | 49.3 s |
-| `cohere-transcribe-03-2026` Cohere Transcribe 03-2026 | WebGPU | 1.53 GB | 13.7% / 15.3% | 55 | 25.7 s (0.19) | 8.6 s (0.17) | 142.5 s |
+| `sensevoice-small` SenseVoiceSmall (default) | wasm | 240 MB | 7.6% / 6.7% | 50 | 27.8 s (0.21) | 10.0 s (0.2) | 29.9 s |
+| `whisper-large-v3-turbo` Whisper large-v3-turbo | WebGPU | 564 MB | 14.8% / 8.6% | 38 | 42.0 s (0.32) | 17.8 s (0.36) | 50.4 s |
+| `cohere-transcribe-03-2026` Cohere Transcribe 03-2026 | WebGPU | 1.53 GB | 13.7% / 15.3% | 55 | 9.1 s (0.07) | 3.3 s (0.07) | 21.6 s |
 | `qwen3-asr-0.6b` Qwen3-ASR-0.6B | wasm | 983 MB | 5.9% / 4.7% | 58 | 347.9 s (2.61) ¹ | 97.9 s (1.96) ¹ | 347.9 s |
-| `zipformer-ctc-small-zh` Zipformer-CTC small zh | wasm | 63 MB | 8.8% / 7% | 0 | 18.7 s (0.14) | 7.7 s (0.15) | 28.9 s |
+| `zipformer-ctc-small-zh` Zipformer-CTC small zh | wasm | 63 MB | 8.8% / 7% | 0 | 17.1 s (0.13) | 6.1 s (0.12) | 24.4 s |
 
 ¹ One run each (Qwen3-ASR is slow on the CPU); the times include loading the 983 MB model.
+Runs were sequential on one machine, one model at a time (earlier runs made while large downloads were
+in progress took up to 2.5× longer). Whisper's meeting CER depends on the piece length: 9.0% with
+28 s pieces in an earlier version, 14.8% with the shared 25 s pieces (more cuts inside sentences).
 Most errors are homophones on the synthetic voices (扫码 → 小马, 波次 → 播次, 陈思齐 → 陈思琪). Zipformer writes no punctuation.
 Whisper and Cohere write ASCII `,` `?` next to full-width `。`; SenseVoice and Qwen3-ASR write full-width marks.
 
@@ -844,8 +847,8 @@ Diarization of the meeting (truth from the generating script: 2 speakers, 12 tur
 
 | Model | Speakers | Turns found / truth | Turn order right | Warm (RTF) | First call |
 |---|---|---|---|---|---|
-| `pyannote-campplus-zh` pyannote + CAM++ (default) | 2 | 12 / 12 | yes | 116.3 s (0.87) | 126.0 s |
-| `nemotron-3-diarization` Nemotron-3-Diarization q4 | 2 | 12 / 12 | yes | 44.8 s (0.34) | 47.6 s |
+| `pyannote-campplus-zh` pyannote + CAM++ (default) | 2 | 12 / 12 | yes | 43.6 s (0.33) | 43.5 s |
+| `nemotron-3-diarization` Nemotron-3-Diarization q4 | 2 | 12 / 12 | yes | 19.9 s (0.15) | 20.4 s |
 
 Both return the same 14 segments; their boundaries agree within 0.2 s.
 
@@ -857,9 +860,9 @@ Neither alternative publishes C-MTEB scores, so this small check is the only Chi
 
 | Model | Dims | recall@3 | MRR | Embed 26 chunks, warm | Per query (host; mean of 12, first includes load) | Runtime |
 |---|---|---|---|---|---|---|
-| `bge-small-zh-v1.5` | 512 | 0.833 (10/12) | 0.867 | 23.8 s | 98 ms | wasm |
-| `granite-embedding-97m-multilingual-r2` | 384 | 0.917 (11/12) | 0.755 | 38.5 s | 211 ms | wasm |
-| `harrier-oss-v1-270m` | 640 | 1.000 (12/12) | 0.889 | 6.0 s | 272 ms | WebGPU |
+| `bge-small-zh-v1.5` | 512 | 0.833 (10/12) | 0.867 | 8.1 s | 37 ms | wasm |
+| `granite-embedding-97m-multilingual-r2` | 384 | 0.917 (11/12) | 0.755 | 27.2 s | 159 ms | wasm |
+| `harrier-oss-v1-270m` | 640 | 1.000 (12/12) | 0.889 | 4.5 s | 165 ms | WebGPU |
 
 Twelve questions is a small sample: one question is worth 0.083. The misses: bge-small ranks the
 专业版表计 and 静态回收期 chunks 5th; granite ranks the 扫码识别率 chunk 16th; harrier has no miss (two at rank 3).
