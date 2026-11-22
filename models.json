@@ -686,7 +686,8 @@
             "commit": "71aa99d37c02a7b4c435275ca9ef50e612f6efa1",
             "tag": "v12.15",
             "ffmpeg": "https://github.com/FFmpeg/FFmpeg/tree/n5.1.4",
-            "notes": "The commit's Dockerfile pins FFmpeg n5.1.4, emscripten/emsdk:3.1.40 and every library branch; see licenses/ffmpeg-wasm-NOTICE.txt."
+            "notes": "The commit's Dockerfile pins FFmpeg n5.1.4, emscripten/emsdk:3.1.40 and every library branch; see licenses/ffmpeg-wasm-NOTICE.txt. The mirror holds every one of those sources as archives at resolved commits, with SHA256SUMS.",
+            "mirror": "https://models.ctsource.cn/sources/ffmpeg-wasm-0.12.10/"
         },
         "upstream": {
             "url": "https://registry.npmjs.org/@ffmpeg/core/-/core-0.12.10.tgz",
