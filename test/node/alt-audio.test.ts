@@ -88,9 +88,13 @@ describe("byte-level BPE (icefall table) and CTC text", () => {
         expect(units).toEqual([
             { text: "你", time: 0.4 },
             { text: "好", time: 0.8 },
-            { text: " OK", time: 1.2 },
+            { text: " O", time: 1.2 },
+            { text: "K", time: 1.2 },
         ]);
         expect(joinUnits(units.map((u) => u.text))).toBe("你好 OK");
+        // a stray continuation byte is dropped, not allowed to swallow the rest
+        const stray = timedUnits([2, 3], [5, 6], syms, true, 0.04);
+        expect(stray.map((u) => u.text)).toEqual(["好"]);
         expect(joinUnits(["你", " 好", "hello", " world"])).toBe("你好hello world");
     });
 

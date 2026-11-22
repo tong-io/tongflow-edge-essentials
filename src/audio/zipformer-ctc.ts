@@ -29,40 +29,64 @@ export function ctcTokensToText(ids: readonly number[], syms: readonly string[],
     return text.replace(/\s+/g, " ").trim();
 }
 
+/** Length of the UTF-8 sequence starting with byte `b` (0 = not a lead byte). */
+function utf8Len(b: number): number {
+    if (b < 0x80) return 1;
+    if (b >= 0xc2 && b <= 0xdf) return 2;
+    if (b >= 0xe0 && b <= 0xef) return 3;
+    if (b >= 0xf0 && b <= 0xf4) return 4;
+    return 0;
+}
+
 /**
- * CTC tokens → text units with times: byte pieces are grouped until they decode to whole
- * UTF-8 characters (a Chinese character is three byte tokens), each unit timed at its
- * first token's frame. `▁` (word boundary) becomes a leading space.
+ * CTC tokens → text units with times: byte pieces are collected into whole UTF-8
+ * characters (a Chinese character is three byte tokens), each timed at the frame of the
+ * token that brought its first byte. Invalid bytes are dropped instead of blocking the
+ * rest. `▁` (word boundary) becomes a leading space; without byte-BPE, each token is a unit.
  */
 export function timedUnits(ids: readonly number[], frames: readonly number[], syms: readonly string[], byteBpe: boolean, frameS: number): TimedToken[] {
     const out: TimedToken[] = [];
-    let pending = "";
-    let pendingAt = 0;
-    for (let i = 0; i < ids.length; i++) {
-        const sym = syms[ids[i]!] ?? "";
-        if (!sym || /^<.*>$/.test(sym)) continue;
-        if (!pending) pendingAt = frames[i]! * frameS;
-        pending += sym;
-        const text = byteBpe ? decodeByteBpe(pending.replace(/^\u2581/, "")) : pending.replace(/\u2581/g, " ");
-        // A unit is complete once its bytes decode without a dangling partial character.
-        const complete = !byteBpe || new TextDecoder("utf-8", { fatal: false }).decode(byteBytes(pending)).indexOf("\uFFFD") < 0;
-        if (complete && text) {
-            out.push({ text: (pending.startsWith("\u2581") && out.length ? " " : "") + text, time: Math.round(pendingAt * 1000) / 1000 });
-            pending = "";
+    const at = (i: number) => Math.round(frames[i]! * frameS * 1000) / 1000;
+    if (!byteBpe) {
+        ids.forEach((id, i) => {
+            const sym = syms[id] ?? "";
+            if (sym && !/^<.*>$/.test(sym)) out.push({ text: sym.replace(/\u2581/g, " "), time: at(i) });
+        });
+        return out;
+    }
+    const table = byteBpeTable();
+    const buf: { b: number; t: number }[] = [];
+    let space = false;
+    const flush = () => {
+        while (buf.length) {
+            const n = utf8Len(buf[0]!.b);
+            if (!n || buf.slice(1, n).some((x) => (x.b & 0xc0) !== 0x80)) {
+                buf.shift(); // not a valid start: drop it
+                continue;
+            }
+            if (buf.length < n) return; // wait for the rest of the character
+            const ch = new TextDecoder().decode(Uint8Array.from(buf.slice(0, n), (x) => x.b));
+            out.push({ text: (space && out.length ? " " : "") + ch, time: buf[0]!.t });
+            space = false;
+            buf.splice(0, n);
         }
-    }
+    };
+    ids.forEach((id, i) => {
+        const sym = syms[id] ?? "";
+        if (!sym || /^<.*>$/.test(sym)) return;
+        for (const c of sym) {
+            const cp = c.codePointAt(0)!;
+            if (cp === 0x2581) {
+                flush();
+                space = true;
+                continue;
+            }
+            const b = table.get(cp) ?? (cp >= 0x20 && cp < 0x7f ? cp : undefined);
+            if (b !== undefined) buf.push({ b, t: at(i) });
+        }
+        flush();
+    });
     return out;
-}
-
-/** The raw bytes a byte-BPE string stands for (word boundaries dropped). */
-function byteBytes(s: string): Uint8Array {
-    const t = byteBpeTable();
-    const out: number[] = [];
-    for (const ch of s) {
-        const b = t.get(ch.codePointAt(0)!);
-        if (b !== undefined) out.push(b);
-    }
-    return Uint8Array.from(out);
 }
 
 /** Zipformer's text from its timed units (CJK joined without spaces). */

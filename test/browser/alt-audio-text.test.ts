@@ -166,6 +166,26 @@ describe.skipIf(!MODELS || !SAMPLES)("transcribe alternatives on the demo meetin
     }
 });
 
+describe.skipIf(!MODELS || !SAMPLES)("transcribe-timestamp alternatives (real models)", () => {
+    for (const { model, webgpu } of [
+        { model: "zipformer-ctc-small-zh", webgpu: false },
+        { model: "whisper-large-v3-turbo", webgpu: true },
+    ]) {
+        it.skipIf(webgpu && !WEBGPU)(`transcribe-timestamp: ${model} on the video narration`, async () => {
+            const r = await call("transcribeTimestamp", { audio: await video() }, { model });
+            if (r.out.error) console.warn(`[alt-ts] ${model} error: ${r.out.error}`);
+            expect(r.out.error).toBeUndefined();
+            const ts = r.out.time_stamps as { start: number; end: number; text: string }[];
+            await record(`alt-ts-${model}`, { model, text: r.out.text, time_stamps: ts });
+            // Zipformer has no punctuation: its sentences end at pauses (≥ 1.2 s) and chunk ends only.
+            expect(ts.length).toBeGreaterThanOrEqual(3);
+            expect(ts.map((t) => t.text).join("").replace(/\s/g, "")).toBe(String(r.out.text).replace(/\s/g, ""));
+            for (let i = 1; i < ts.length; i++) expect(ts[i]!.start).toBeGreaterThanOrEqual(ts[i - 1]!.end);
+            expect(ts.at(-1)!.end).toBeLessThanOrEqual(50.1);
+        }, 900_000);
+    }
+});
+
 /** Speaker of each turn (consecutive same-speaker segments merged). */
 function turns(segs: { speaker: number; start: number; end: number }[]): number[] {
     const out: number[] = [];
