@@ -1041,7 +1041,8 @@ it (taken under GPL-3.0, AGPL-3.0 §13), so a GPL build with x264/x265 is accept
 kept: the core is the unmodified official `@ffmpeg/core` 0.12.10 build; the GPL-2.0 text ships in
 `licenses/GPL-2.0.txt`; `licenses/ffmpeg-wasm-NOTICE.txt` and the `models.json` entry name the
 corresponding source (ffmpegwasm/ffmpeg.wasm commit `71aa99d37c02a7b4c435275ca9ef50e612f6efa1`,
-tag `v12.15`, which pins FFmpeg n5.1.4 and every library); a host that mirrors the core should
+tag `v12.15`, which pins FFmpeg n5.1.4 and every library), mirrored in full at
+<https://models.ctsource.cn/sources/ffmpeg-wasm-0.12.10/>; a host that mirrors the core should
 serve that NOTICE and the license next to it. It runs in its own worker and is never part of the
 plugin bundle.
 

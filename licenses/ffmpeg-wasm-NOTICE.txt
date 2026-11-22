@@ -41,6 +41,10 @@ Corresponding source (GPL-2.0 section 3)
         HarfBuzz 5.2.0          https://github.com/harfbuzz/harfbuzz       (MIT)
         libass 0.15.0           https://github.com/libass/libass           (ISC)
         zimg release-3.0.5      https://github.com/sekrit-twc/zimg         (WTFPL)
+    Mirror of all of the above, each archive at the commit its ref resolved to
+    (x264 4-cores, LAME master: unchanged since before 2025-01-07), zimg with its
+    submodules, plus SHA256SUMS:
+        https://models.ctsource.cn/sources/ffmpeg-wasm-0.12.10/
     Anyone who receives the core from a host running this plugin may obtain the
     corresponding source from the URLs above; a host that mirrors the core should
     mirror this NOTICE and GPL-2.0.txt next to it.
