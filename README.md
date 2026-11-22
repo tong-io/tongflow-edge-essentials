@@ -839,7 +839,7 @@ run with the model loaded; RTF = warm time / audio length.
 ¹ One run each (Qwen3-ASR is slow on the CPU); the times include loading the 983 MB model.
 Runs were sequential on one machine, one model at a time (earlier runs made while large downloads were
 in progress took up to 2.5× longer). Whisper's meeting CER depends on the piece length: 9.0% with
-28 s pieces in an earlier version, 14.8% with the shared 25 s pieces (more cuts inside sentences).
+28 s pieces in an earlier version, 14.8% with the shared 25 s pieces.
 Most errors are homophones on the synthetic voices (扫码 → 小马, 波次 → 播次, 陈思齐 → 陈思琪). Zipformer writes no punctuation.
 Whisper and Cohere write ASCII `,` `?` next to full-width `。`; SenseVoice and Qwen3-ASR write full-width marks.
 
