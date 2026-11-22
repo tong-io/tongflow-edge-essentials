@@ -1,6 +1,6 @@
 /**
- * tongflow-edge-essentials: browser edge nodes (T0 zero-model nodes, knowledge-base nodes,
- * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, EmbeddingGemma 2, LFM2.5-350M; and the T2 audio nodes:
+ * tongflow-edge-essentials: browser edge nodes (T0 zero-model nodes,
+ * and the T3 WebGPU nodes: Qwen3.5-0.8B, GLM-OCR, LFM2.5-350M; and the T2 audio nodes:
  * SenseVoiceSmall or X-ASR zh-en, Silero VAD, pyannote + CAM++, CED-tiny, with the alternatives Whisper large-v3-turbo,
  * Cohere Transcribe, Qwen3-ASR-0.6B, Zipformer-CTC and Nemotron-3-Diarization picked by the node's model;
  * and the media nodes on Mediabunny + WebCodecs with ffmpeg.wasm as fallback / selectable implementation).
@@ -11,9 +11,57 @@
  * `method` values in tongflow.plugin.json. Each slot's heavy library is a lazy
  * dynamic import, so loading this entry costs only the dispatch code.
  */
-import { EdgeMethodContext } from "tongflow/engine/worker";
-import { a as SlotImpl, c as EdgeContext, i as NodeSlot, l as toEdgeContext, n as Asset, o as SlotInput, r as EdgeSlotOutput, s as SlotOutput, t as KbWriteSummary } from "./chunks/kb-write-CbYzFC87.js";
-import { n as DEFAULT_EMBED_MODEL, r as EMBED_MODELS } from "./chunks/models-kIFyc-Fb.js";
+import { EdgeMethodContext, EdgeSlotOutput } from "tongflow/engine/worker";
+import { Asset, NodeSlot, SlotInput, SlotOutput } from "tongflow";
+/**
+ * The plugin's internal context, built from the engine's {@link EdgeMethodContext}
+ * by {@link toEdgeContext}. Slot implementations only see this, so the engine
+ * protocol can change in one place.
+ */
+interface EdgeContext {
+  /** Aborted when the run is cancelled or the node is skipped. */
+  signal: AbortSignal;
+  /** Live status for the node: a 0..1 fraction and/or a short message. */
+  onProgress(p: {
+    fraction?: number;
+    message?: string;
+  }): void;
+  /** Byte progress while a lazily loaded asset (wasm, data, model weights) is downloaded. */
+  onDownload(p: {
+    loaded: number;
+    total?: number;
+    label: string;
+    model?: string;
+  }): void;
+  /** The node's chosen model (manifest `models`), when the host set one; absent = the slot's default. */
+  model?: string;
+  /**
+   * Absolute URL (ending in `/`) that model files are fetched from:
+   * `<modelBase><org>/<repo>/<path>`. See `util/model-base.ts`.
+   */
+  modelBase: string;
+  /**
+   * Map a plugin-relative asset path (for example `assets/xberg/xberg_wasm_bg.wasm`)
+   * to a same-origin URL the worker can fetch. Directory paths end with `/`.
+   */
+  resolveAsset(relPath: string): string;
+  /** The slot this call runs for (one method may serve several slots). */
+  nodeSlot?: string;
+  /** Advanced params from the node (`_params`); `{}` when none. */
+  params?: Record<string, unknown>;
+}
+/**
+ * Adapt the engine's ctx. The engine has no asset resolver: assets live next to the
+ * entry module (`dist/assets/…` beside `dist/index.js`), so URLs are resolved against
+ * the entry's `import.meta.url`, which is the same origin the host loaded the plugin from.
+ */
+export declare function toEdgeContext(ctx: EdgeMethodContext, assetBase: string | URL): EdgeContext;
+/**
+ * A slot implementation against the plugin's internal {@link EdgeContext}.
+ * `EdgeSlotOutput<S>` is `SlotOutput<S>` with ref fields allowed to carry an inline
+ * `Asset` (`bytesBase64`), which the engine stores and turns into a file ref.
+ */
+type SlotImpl<S extends NodeSlot> = (input: SlotInput<S>, ctx: EdgeContext) => Promise<EdgeSlotOutput<S>>;
 type VisionTextInput = SlotInput<"image-gen-text"> | SlotInput<"image-describe">;
 /**
  * Where model weights are fetched from: the **model base URL**. Files live under
@@ -72,7 +120,7 @@ interface T3Model {
   f16: ModelVariant;
   fallback: ModelVariant;
 }
-export declare const T3_MODELS: readonly [T3Model, T3Model, T3Model, T3Model, T3Model];
+export declare const T3_MODELS: readonly [T3Model, T3Model, T3Model, T3Model];
 /** Every file a model needs under its repo dir, for both variants (what the host must mirror). */
 export declare function hostedFiles(model: T3Model): string[];
 /**
@@ -92,12 +140,8 @@ export declare const methods: {
   removeVideoAudio: import("tongflow/engine/worker").EdgeMethod<"remove-video-audio">;
   mergeVideoAudio: import("tongflow/engine/worker").EdgeMethod<"merge-video-audio">;
   detectLanguage: import("tongflow/engine/worker").EdgeMethod<"detect-language">;
-  chunkText: import("tongflow/engine/worker").EdgeMethod<"chunk-text">;
-  embedText: import("tongflow/engine/worker").EdgeMethod<"embed-text">;
-  kbWrite: import("tongflow/engine/worker").EdgeMethod<"kb-write">;
   imageGenText: (input: VisionTextInput, ctx: EdgeMethodContext) => Promise<EdgeSlotOutput<"image-gen-text">>;
   ocrImageGlm: import("tongflow/engine/worker").EdgeMethod<"ocr-image">;
-  embedImage: import("tongflow/engine/worker").EdgeMethod<"embed-image">;
   genText: import("tongflow/engine/worker").EdgeMethod<"gen-text">;
   transcribe: import("tongflow/engine/worker").EdgeMethod<"transcribe">;
   transcribeTimestamp: import("tongflow/engine/worker").EdgeMethod<"transcribe-timestamp">;
@@ -128,12 +172,8 @@ export declare const slots: {
   readonly "remove-video-audio": "removeVideoAudio";
   readonly "merge-video-audio": "mergeVideoAudio";
   readonly "detect-language": "detectLanguage";
-  readonly "chunk-text": "chunkText";
-  readonly "embed-text": "embedText";
-  readonly "kb-write": "kbWrite";
   readonly "image-gen-text": "imageGenText";
   readonly "image-describe": "imageGenText";
-  readonly "embed-image": "embedImage";
   readonly "gen-text": "genText";
   readonly "ocr-image": "ocrImage";
   readonly transcribe: "transcribe";
@@ -162,7 +202,6 @@ export declare const impls: {
   detectObjects: SlotImpl<"detect-objects">;
   imageGenText: (input: VisionTextInput, ctx: EdgeContext) => Promise<EdgeSlotOutput<"image-gen-text">>;
   ocrImageGlm: (input: SlotInput<"ocr-image">, ctx: EdgeContext) => Promise<EdgeSlotOutput<"ocr-image">>;
-  embedImage: (input: SlotInput<"embed-image">, ctx: EdgeContext) => Promise<EdgeSlotOutput<"embed-image">>;
   genText: (input: SlotInput<"gen-text">, ctx: EdgeContext) => Promise<EdgeSlotOutput<"gen-text">>;
   parseDocument: SlotImpl<"parse-document">;
   renderPages: SlotImpl<"render-pages">;
@@ -173,9 +212,6 @@ export declare const impls: {
   removeVideoAudio: SlotImpl<"remove-video-audio">;
   mergeVideoAudio: SlotImpl<"merge-video-audio">;
   detectLanguage: SlotImpl<"detect-language">;
-  chunkText: SlotImpl<"chunk-text">;
-  embedText: SlotImpl<"embed-text">;
-  kbWrite: SlotImpl<"kb-write">;
 };
 declare const _default: {
   methods: {
@@ -188,12 +224,8 @@ declare const _default: {
     removeVideoAudio: import("tongflow/engine/worker").EdgeMethod<"remove-video-audio">;
     mergeVideoAudio: import("tongflow/engine/worker").EdgeMethod<"merge-video-audio">;
     detectLanguage: import("tongflow/engine/worker").EdgeMethod<"detect-language">;
-    chunkText: import("tongflow/engine/worker").EdgeMethod<"chunk-text">;
-    embedText: import("tongflow/engine/worker").EdgeMethod<"embed-text">;
-    kbWrite: import("tongflow/engine/worker").EdgeMethod<"kb-write">;
     imageGenText: (input: VisionTextInput, ctx: EdgeMethodContext) => Promise<EdgeSlotOutput<"image-gen-text">>;
     ocrImageGlm: import("tongflow/engine/worker").EdgeMethod<"ocr-image">;
-    embedImage: import("tongflow/engine/worker").EdgeMethod<"embed-image">;
     genText: import("tongflow/engine/worker").EdgeMethod<"gen-text">;
     transcribe: import("tongflow/engine/worker").EdgeMethod<"transcribe">;
     transcribeTimestamp: import("tongflow/engine/worker").EdgeMethod<"transcribe-timestamp">;
@@ -214,4 +246,4 @@ declare const _default: {
     detectObjects: import("tongflow/engine/worker").EdgeMethod<"detect-objects">;
   };
 };
-export { type Asset, DEFAULT_EMBED_MODEL, EMBED_MODELS, type EdgeConfig, type EdgeContext, type EdgeSlotOutput, type KbWriteSummary, type NodeSlot, type SlotImpl, type SlotInput, type SlotOutput, _default as default, toEdgeContext };
+export { type Asset, type EdgeConfig, type EdgeContext, type EdgeSlotOutput, type NodeSlot, type SlotImpl, type SlotInput, type SlotOutput, _default as default };

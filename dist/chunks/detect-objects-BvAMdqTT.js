@@ -1,0 +1,1 @@
+export{a as detectObjects}from"./detect-objects-BW5xHkBc.js";
