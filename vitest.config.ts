@@ -33,7 +33,7 @@ let corruptRepo = "";
 /** Requests for the plugin's onnxruntime-web assets (`/dist/assets/ort/…`), to check the wasm is fetched once. */
 const ortRequests: string[] = [];
 if (!modelsDir && !process.argv.includes("node")) {
-    console.info("[edge] EDGE_MODELS_DIR is not set: the real-model browser tests (test/browser/kb-models.test.ts) skip");
+    console.info("[edge] EDGE_MODELS_DIR is not set: the real-model browser tests skip");
 }
 function serveModels() {
     return {
@@ -121,8 +121,6 @@ const WEBGPU_ARGS = ["--enable-unsafe-webgpu", "--enable-features=Vulkan", ...(p
  */
 const samplesDir = process.env.SCANALL_SAMPLES_DIR ?? r("../../../ctsource/scanall/demo/samples");
 
-/** The host-side knowledge base (`@scanall/kb`), for the end-to-end ingest test; optional. */
-const scanallKb = process.env.SCANALL_KB_DIR ?? r("../../../ctsource/scanall/packages/kb");
 /** scanall's demo samples (real-library and real-model comparisons of the alternative implementations); optional. */
 const demoSamples = process.env.SCANALL_SAMPLES_DIR ?? r("../../../ctsource/scanall/demo/samples");
 
@@ -161,7 +159,6 @@ export default defineConfig({
                         allow: [
                             r("./"),
                             realpathSync(r("./node_modules/tongflow")),
-                            ...(existsSync(scanallKb) ? [scanallKb] : []),
                             ...(existsSync(demoSamples) ? [demoSamples] : []),
                         ],
                     },
@@ -172,7 +169,6 @@ export default defineConfig({
                     __EDGE_MODELS__: JSON.stringify(modelsDir),
                     __EDGE_WEBGPU__: JSON.stringify(WEBGPU),
                     __SCANALL_SAMPLES__: JSON.stringify(existsSync(samplesDir)),
-                    __SCANALL_KB__: JSON.stringify(existsSync(`${scanallKb}/src/index.ts`) ? `/@fs${scanallKb}/src/index.ts` : ""),
                     __DEMO_SAMPLES__: JSON.stringify(existsSync(demoSamples) ? `/@fs${demoSamples}/` : ""),
                 },
                 test: {

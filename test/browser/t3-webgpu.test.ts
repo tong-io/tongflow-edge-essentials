@@ -115,7 +115,6 @@ describe.runIf(!WEBGPU)("T3 nodes without WebGPU (default headless Chromium)", (
         ["imageGenText", "image-gen-text", async () => ({ text: "描述这张图", image: await image() })],
         ["imageGenText", "image-describe", async () => ({ image: await image() })],
         ["ocrImageGlm", "ocr-image", async () => ({ image: await image() })],
-        ["embedImage", "embed-image", async () => ({ image: await image() })],
         ["genText", "gen-text", async () => ({ text: "合同金额 100 万元，2026 年 3 月 1 日签订。" })],
     ])("%s (%s) fails with a clear WebGPU error", async (method, slot, input) => {
         const r = await invoke(method, slot, await input());
@@ -279,8 +278,8 @@ describe.runIf(MODELS)("T3 nodes with real models from EDGE_MODELS_DIR (WebGPU)"
     it(
         "a model that fails to build its session does not break the next model in the same worker",
         async (ctx) => {
-            const broken = "onnx-community/embeddinggemma-2-ONNX";
-            if (!(await hasModel(broken)) || !(await hasModel("onnx-community/GLM-OCR-ONNX"))) ctx.skip("needs EmbeddingGemma 2 and GLM-OCR in EDGE_MODELS_DIR");
+            const broken = "LiquidAI/LFM2.5-350M-ONNX";
+            if (!(await hasModel(broken)) || !(await hasModel("onnx-community/GLM-OCR-ONNX"))) ctx.skip("needs LFM2.5-350M and GLM-OCR in EDGE_MODELS_DIR");
             // Junk responses would otherwise stay in transformers.js' Cache API bucket.
             const forget = async () => {
                 const cache = await caches.open("transformers-cache");
@@ -288,10 +287,12 @@ describe.runIf(MODELS)("T3 nodes with real models from EDGE_MODELS_DIR (WebGPU)"
             };
             const w = freshWorker("/models/");
             try {
+                // The gen-text test above may have cached the good graph already.
+                await forget();
                 await fetch(`/__corrupt-graphs?repo=${encodeURIComponent(broken)}`);
-                const bad = await invoke("embedImage", "embed-image", { image: await image() }, { worker: w });
+                const bad = await invoke("genText", "gen-text", { text: "合同金额 100 万元。" }, { worker: w });
                 expect(bad.out.success).toBe(false);
-                expect(bad.out.error).toMatch(/could not load EmbeddingGemma 2/);
+                expect(bad.out.error).toMatch(/could not load LFM2\.5-350M/);
                 await fetch("/__corrupt-graphs?repo=");
                 await forget();
                 // transformers.js chains session creation; before the bundle patch the rejected
@@ -305,26 +306,6 @@ describe.runIf(MODELS)("T3 nodes with real models from EDGE_MODELS_DIR (WebGPU)"
                 await forget();
                 w.worker.terminate();
             }
-        },
-        LONG,
-    );
-
-    it(
-        "embed-image: EmbeddingGemma 2 returns one normalized 768-d TFV1 vector",
-        async (ctx) => {
-            if (!(await hasModel("onnx-community/embeddinggemma-2-ONNX"))) ctx.skip("onnx-community/embeddinggemma-2-ONNX is not in EDGE_MODELS_DIR");
-            const r = await invoke("embedImage", "embed-image", { image: await image() });
-            log("embed-image (load + embed)", r.ms);
-            expect(r.out.error).toBeUndefined();
-            const bytes = Uint8Array.from(atob(r.out.vectors.bytesBase64), (ch) => ch.charCodeAt(0));
-            const v = new DataView(bytes.buffer);
-            expect(new TextDecoder().decode(bytes.subarray(0, 4))).toBe("TFV1");
-            expect(v.getUint32(4, true)).toBe(768);
-            expect(v.getUint32(8, true)).toBe(1);
-            let sq = 0;
-            for (let i = 0; i < 768; i++) sq += v.getFloat32(12 + 4 * i, true) ** 2;
-            expect(Math.sqrt(sq)).toBeCloseTo(1, 3);
-            expect(r.out.vectors.filename).toBe("invoice.tfv1");
         },
         LONG,
     );

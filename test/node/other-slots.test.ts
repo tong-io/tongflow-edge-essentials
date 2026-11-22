@@ -101,4 +101,16 @@ describe("manifest", () => {
         expect(declared).toEqual(slots);
         for (const m of Object.values(declared)) expect(typeof (methods as Record<string, unknown>)[m as string]).toBe("function");
     });
+
+    it("has no knowledge-base slots (moved to host applications), so it fits TongFlow ABIs with and without them", () => {
+        const removed = ["chunk-text", "embed-text", "embed-image", "kb-write"];
+        for (const slot of removed) expect(manifest.slots.map((s: { nodeSlot: string }) => s.nodeSlot)).not.toContain(slot);
+        for (const m of ["chunkText", "embedText", "embedImage", "kbWrite"]) {
+            expect(methods).not.toHaveProperty(m);
+            expect(impls).not.toHaveProperty(m);
+        }
+        const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+        expect(Object.keys(pkg.exports)).not.toEqual(expect.arrayContaining(["./kb-host"]));
+        expect(Object.keys(pkg.exports)).not.toEqual(expect.arrayContaining(["./embed-query"]));
+    });
 });

@@ -1,4 +1,4 @@
-// Alternative `transcribe`, `diarize-speakers` and `embed-text` models (issue 30, part B),
+// Alternative `transcribe` and `diarize-speakers` models (issue 30, part B),
 // in the built plugin worker over the engine protocol.
 //
 // Default run: no weights, no GPU. The WebGPU-only models must fail with the WebGPU
@@ -225,106 +225,6 @@ describe.skipIf(!MODELS || !SAMPLES)("diarize-speakers alternatives on the demo 
             console.warn(`[alt-diar] ${model}: ${speakers} speakers, ${got.length}/${truth.length} turns, match=${result.turnSequenceMatches}, warm ${Math.round(warmMs)} ms`);
             await record(`alt-diar-${model}`, result);
             expect(speakers).toBe(2);
-            w.worker.terminate();
-        }, 1_800_000);
-    }
-});
-
-/**
- * Retrieval check for `embed-text` + the host-side `createQueryEmbedder`: the demo
- * documents (parsed and chunked by the plugin) plus the meeting and video scripts, the
- * README's questions (scanned PDF / whiteboard ones left out: they need OCR), and an
- * answer pattern per question. recall@3 = share of questions with a matching chunk in the top 3.
- */
-const QUESTIONS: [string, RegExp][] = [
-    ["试运行从哪天开始？", /12 月 1 日起|十二月一号开始试运行/],
-    ["扫码识别率的问题由谁负责解决？", /自动化部牵头|补光扫码器选型|陈思齐那边/],
-    ["专业版最多能接入多少块表？", /10,000/],
-    ["试点园区的用电量下降了多少？", /11\.4%|十一点四/],
-    ["华北区 10 月为什么没完成目标？", /大客户项目延期/],
-    ["西南区的环比增长是多少？", /\+15\.2%/],
-    ["这个方案的静态回收期是多久？", /静态回收期/],
-    ["换型现在平均要多长时间？", /换型平均耗时/],
-    ["扫码识别率现在是多少？", /99\.2%|九十九点二/],
-    ["补光扫码器的预算是多少？", /1\.8 万元|一万八千/],
-    ["试点之后综合用电量下降了多少？", /11\.4%|十一点四/],
-    ["标准实施周期是多久？", /标准实施周期/],
-];
-const DOCS: [string, string][] = [
-    ["项目周例会纪要.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
-    ["产品白皮书.pdf", "application/pdf"],
-    ["月度销售.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
-    ["方案汇报.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
-];
-
-function unpackTfv1(b64: string): { dims: number; rows: Float32Array[] } {
-    const bin = atob(b64);
-    const u8 = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-    const v = new DataView(u8.buffer);
-    expect(String.fromCharCode(u8[0]!, u8[1]!, u8[2]!, u8[3]!)).toBe("TFV1");
-    const dims = v.getUint32(4, true);
-    const count = v.getUint32(8, true);
-    const data = new Float32Array(u8.buffer.slice(12, 12 + 4 * count * dims));
-    return { dims, rows: Array.from({ length: count }, (_, i) => data.subarray(i * dims, (i + 1) * dims)) };
-}
-
-describe.skipIf(!MODELS || !SAMPLES)("embed-text alternatives: recall@3 on the demo samples (real models)", () => {
-    for (const model of ["bge-small-zh-v1.5", "harrier-oss-v1-270m", "granite-embedding-97m-multilingual-r2"]) {
-        it(`embed-text + createQueryEmbedder: ${model}`, async () => {
-            const w = startWorker("/dist/index.js");
-            const texts: string[] = [];
-            for (const [name, mime] of DOCS) {
-                const p = await call("parseDocument", { document: await sample(name, mime) }, { worker: w });
-                expect(p.out.error, name).toBeUndefined();
-                texts.push(p.out.text);
-            }
-            texts.push(MEETING.map(([, t]) => t).join(""), VIDEO_TEXT);
-            const ch = await call("chunkText", { texts }, { worker: w });
-            const chunks: string[] = ch.out.chunks;
-            const t0 = performance.now();
-            const e = await call("embedText", { texts: chunks }, { worker: w, model });
-            const docMs = performance.now() - t0;
-            if (e.out.error) console.warn(`[alt-embed] ${model} error: ${e.out.error}`);
-            expect(e.out.error).toBeUndefined();
-            const tw = performance.now();
-            await call("embedText", { texts: chunks }, { worker: w, model });
-            const warmDocMs = performance.now() - tw;
-            const { dims, rows } = unpackTfv1(e.out.vectors.bytesBase64);
-            const mod = (await import(/* @vite-ignore */ `${location.origin}/dist/embed-query.js`)) as typeof import("../../src/embed-query.js");
-            const q = mod.createQueryEmbedder({ model });
-            expect(q.model.id).toBe(model);
-            expect(q.model.dims).toBe(dims);
-            let hits = 0;
-            let rr = 0;
-            const perQuestion: unknown[] = [];
-            const t1 = performance.now();
-            for (const [question, answer] of QUESTIONS) {
-                const qv = await q.embed(question);
-                expect(qv.length).toBe(dims);
-                const ranked = rows
-                    .map((r, i) => ({ i, s: r.reduce((a, x, k) => a + x * qv[k]!, 0) }))
-                    .sort((a, b) => b.s - a.s);
-                const rank = ranked.findIndex((x) => answer.test(chunks[x.i]!)) + 1;
-                if (rank >= 1 && rank <= 3) hits++;
-                if (rank >= 1) rr += 1 / rank;
-                perQuestion.push({ question, rank });
-            }
-            const queryMs = (performance.now() - t1) / QUESTIONS.length;
-            const result = {
-                model,
-                dims,
-                chunks: chunks.length,
-                recallAt3: Math.round((hits / QUESTIONS.length) * 1000) / 1000,
-                mrr: Math.round((rr / QUESTIONS.length) * 1000) / 1000,
-                firstDocEmbedMs: Math.round(docMs),
-                warmDocEmbedMs: Math.round(warmDocMs),
-                queryMs: Math.round(queryMs),
-                perQuestion,
-            };
-            console.warn(`[alt-embed] ${model}: recall@3 ${result.recallAt3} MRR ${result.mrr} (${chunks.length} chunks, docs warm ${Math.round(warmDocMs)} ms)`);
-            await record(`alt-embed-${model}`, result);
-            expect(hits).toBeGreaterThan(QUESTIONS.length / 2);
             w.worker.terminate();
         }, 1_800_000);
     }

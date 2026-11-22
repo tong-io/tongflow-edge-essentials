@@ -1,8 +1,8 @@
 {
     "name": "tongflow-edge-essentials",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "private": true,
-    "description": "Official TongFlow browser edge plugin: on-device document, media, language and knowledge-base (chunk, embed, write) and vision/document (OCR, orientation, layout, tables, shots, objects) nodes.",
+    "description": "Official TongFlow browser edge plugin: on-device document, media, language, audio and vision/document (OCR, orientation, layout, tables, shots, objects) nodes.",
     "license": "AGPL-3.0-only",
     "author": "tong-io",
     "repository": {
@@ -17,14 +17,6 @@
         ".": {
             "types": "./dist/index.d.ts",
             "default": "./dist/index.js"
-        },
-        "./embed-query": {
-            "types": "./dist/embed-query.d.ts",
-            "default": "./dist/embed-query.js"
-        },
-        "./kb-host": {
-            "types": "./dist/kb-host.d.ts",
-            "default": "./dist/kb-host.js"
         },
         "./tongflow.plugin.json": "./tongflow.plugin.json",
         "./models.json": "./models.json"

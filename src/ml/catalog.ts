@@ -67,20 +67,6 @@ export const GLM_OCR: T3Model = {
     fallback: { dtype: { embed_tokens: "q4", vision_encoder: "q4", decoder_model_merged: "q4" }, approxMB: 745 },
 };
 
-export const EMBEDDING_GEMMA_2: T3Model = {
-    id: "embeddinggemma-2",
-    name: "EmbeddingGemma 2 (text + vision)",
-    repo: "onnx-community/embeddinggemma-2-ONNX",
-    license: "Apache-2.0 (Gemma 4 license); deployments must follow the Gemma Prohibited Use Policy",
-    licenseUrl: "https://ai.google.dev/gemma/docs/gemma_4_license",
-    attribution: "EmbeddingGemma 2 by Google DeepMind",
-    // The audio encoder is never loaded (its config is dropped before loading).
-    files: ["config.json", "config_sentence_transformers.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja", "preprocessor_config.json", "processor_config.json"],
-    // `model` is the text backbone + embedder head; image embeddings go through it too.
-    f16: { dtype: { model: "q4f16", vision_encoder: "q4f16" }, approxMB: 290 },
-    fallback: { dtype: { model: "q4", vision_encoder: "q4" }, approxMB: 316 },
-};
-
 export const LFM25_350M: T3Model = {
     id: "lfm2.5-350m",
     name: "LFM2.5-350M",
@@ -114,7 +100,7 @@ export const QWEN35_TEXT: T3Model = {
     fallback: { dtype: { model: "q4" }, approxMB: 571 },
 };
 
-export const T3_MODELS = [QWEN35_VL, GLM_OCR, EMBEDDING_GEMMA_2, LFM25_350M, QWEN35_TEXT] as const;
+export const T3_MODELS = [QWEN35_VL, GLM_OCR, LFM25_350M, QWEN35_TEXT] as const;
 
 /* ---------- alternative implementations (picked in the canvas "换实现" menu) ---------- */
 

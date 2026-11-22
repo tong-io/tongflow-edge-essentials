@@ -9,7 +9,6 @@ import {
     pickModel,
     variantFor,
     withExternalData,
-    EMBEDDING_GEMMA_2,
     GLM_OCR,
     LFM25_350M,
     QWEN35_VL,
@@ -33,7 +32,6 @@ import {
 } from "../../src/ml/prompts.js";
 import { DownloadProgress, TokenProgress } from "../../src/ml/progress.js";
 import { GLM_OCR_BUDGET, QWEN_BUDGET, fitWithin, smartResize, visionTokens, withMaxPixels } from "../../src/ml/sizing.js";
-import { TFV1_HEADER_BYTES, packVectors, truncateNormalize } from "../../src/ml/tfv1.js";
 import { sniffImageMime } from "../../src/ml/image.js";
 import {
     WEBGPU_MISSING,
@@ -43,7 +41,6 @@ import {
     requireWebGPU,
     resetWebGPUProbe,
 } from "../../src/ml/webgpu.js";
-import { parseDims, vectorsFilename } from "../../src/slots/embed-image.js";
 import { truncateTokens } from "../../src/slots/gen-text.js";
 
 const root = new URL("../../", import.meta.url);
@@ -83,7 +80,7 @@ describe("model catalog and models.json", () => {
             "vision_encoder_q4f16.onnx": 1,
             "decoder_model_merged_q4f16.onnx": 1,
         });
-        expect(externalDataFormat(EMBEDDING_GEMMA_2.fallback)).toEqual({ "model_q4.onnx": 1, "vision_encoder_q4.onnx": 1 });
+        expect(externalDataFormat({ dtype: { model: "q4", vision_encoder: "q4" }, approxMB: 1 })).toEqual({ "model_q4.onnx": 1, "vision_encoder_q4.onnx": 1 });
         // every graph externalDataFormat names has its .onnx_data in onnxFiles (what the host mirrors)
         for (const m of T3_MODELS) {
             for (const v of [m.f16, m.fallback]) {
@@ -160,38 +157,6 @@ describe("model catalog and models.json", () => {
         expect(readme).toMatch(/1000 万美元/);
         const lfm = manifest.find((e) => e.id === "lfm2.5-350m")!;
         expect(lfm.license).toMatch(/LFM Open License v1\.0/);
-    });
-});
-
-describe("TFV1 vectors", () => {
-    it("packs magic, dims, count and little-endian float32 rows", () => {
-        const bytes = packVectors([[1, 2, 3], [4, 5, 6]]);
-        expect(bytes.byteLength).toBe(TFV1_HEADER_BYTES + 4 * 3 * 2);
-        expect(new TextDecoder().decode(bytes.subarray(0, 4))).toBe("TFV1");
-        const v = new DataView(bytes.buffer);
-        expect(v.getUint32(4, true)).toBe(3);
-        expect(v.getUint32(8, true)).toBe(2);
-        expect([0, 1, 2, 3, 4, 5].map((i) => v.getFloat32(12 + 4 * i, true))).toEqual([1, 2, 3, 4, 5, 6]);
-    });
-
-    it("rejects ragged input and needs dims for an empty set", () => {
-        expect(() => packVectors([[1, 2], [1]])).toThrow(/vector 1 has length 1/);
-        expect(() => packVectors([])).toThrow(/dims is required/);
-        expect(packVectors([], 768).byteLength).toBe(TFV1_HEADER_BYTES);
-    });
-
-    it("truncates Matryoshka-style and renormalizes", () => {
-        const v = truncateNormalize([3, 4, 12], 2);
-        expect(Array.from(v)).toEqual([expect.closeTo(0.6, 6), expect.closeTo(0.8, 6)]);
-        expect(() => truncateNormalize([1, 2], 3)).toThrow(RangeError);
-    });
-
-    it("validates dims and names the output after the input", () => {
-        expect(parseDims(undefined)).toBe(768);
-        expect(parseDims(256)).toBe(256);
-        expect(() => parseDims(300)).toThrow(/dims must be one of 768, 512, 256, 128/);
-        expect(vectorsFilename("scans/page-3.png")).toBe("page-3.tfv1");
-        expect(vectorsFilename(undefined)).toBe("image.tfv1");
     });
 });
 
